@@ -1,4 +1,4 @@
-# guia_claudinha — manual operacional do Agenda Flex
+# guia_claudinha — manual operacional do Meu Serviço Online
 
 Otimizado pra Claude entrar em conversas novas já com contexto. Lê §0–4 pra entender o projeto; consulta o resto sob demanda durante o trabalho.
 
@@ -6,7 +6,7 @@ Otimizado pra Claude entrar em conversas novas já com contexto. Lê §0–4 pra
 
 ## 0. Sobre o projeto
 
-**Agenda Flex** (pasta `agendamento`) — SPA de agendamento multi-serviço, em fase de **homologação de fluxo** entre três papéis: cliente, prestador e admin.
+**Meu Serviço Online** (pasta `agendamento`) — SPA de agendamento multi-serviço, em fase de **homologação de fluxo** entre três papéis: cliente, prestador e admin.
 
 **Propósito**: prestador de serviço (barbeiro, eletricista, clínica, personal trainer etc.) recebe um link próprio, o cliente agenda direto por ele sem ver outros prestadores, e o admin aprova/governa a plataforma.
 

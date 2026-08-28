@@ -280,7 +280,7 @@ function App() {
   const [appearance, setAppearance] = useState(() => localStorage.getItem('agenda-appearance') || 'system')
   const [showPassword, setShowPassword] = useState(false)
   const [loginError, setLoginError] = useState('')
-  const [loginForm, setLoginForm] = useState({ email: 'demo@agendaflex.com.br', password: '123456' })
+  const [loginForm, setLoginForm] = useState({ email: 'demo@meuservicopro.com.br', password: '123456' })
   const [data, setData] = useState(null)
   const [loading, setLoading] = useState(true)
   const [loadError, setLoadError] = useState(null)
@@ -1278,7 +1278,7 @@ function App() {
           <div className="brand loginBrand">
             <div className="brandMark"><CalendarCheck size={20} /></div>
             <div>
-              <strong>Agenda Flex</strong>
+              <strong>Meu Serviço Online</strong>
               <span>Carregando dados...</span>
             </div>
           </div>
@@ -1295,7 +1295,7 @@ function App() {
           <div className="brand loginBrand">
             <div className="brandMark"><AlertCircle size={20} /></div>
             <div>
-              <strong>Agenda Flex</strong>
+              <strong>Meu Serviço Online</strong>
               <span>Não foi possível carregar os dados</span>
             </div>
           </div>

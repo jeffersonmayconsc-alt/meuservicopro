@@ -15,7 +15,7 @@ if not exist "node_modules" (
 )
 
 echo.
-echo Iniciando Agenda Flex...
+echo Iniciando Meu Servico Online...
 echo Abra no navegador: http://127.0.0.1:5173
 echo.
 

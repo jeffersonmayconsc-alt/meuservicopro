@@ -1,5 +1,5 @@
 -- ============================================================
--- Agenda Flex — schema Supabase (migração de dados, sem autenticação real)
+-- Meu Serviço Online — schema Supabase (migração de dados, sem autenticação real)
 --
 -- AVISO DE SEGURANÇA: RLS está habilitado em todas as tabelas abaixo
 -- com uma política permissiva liberando leitura/escrita total para o
@@ -16,10 +16,10 @@
 
 create table public.platform_settings (
   id integer primary key default 1 check (id = 1),
-  brand_name text not null default 'Agenda Flex',
+  brand_name text not null default 'Meu Serviço Online',
   brand_accent text not null default '#2563eb',
-  brand_support text not null default 'contato@agendaflex.local',
-  brand_privacy_email text not null default 'privacidade@agendaflex.local',
+  brand_support text not null default 'contato@meuservicopro.local',
+  brand_privacy_email text not null default 'privacidade@meuservicopro.local',
   approval_mode text not null default 'manual' check (approval_mode in ('manual', 'automatico')),
   min_lead_hours integer not null default 2,
   max_advance_days integer not null default 30,

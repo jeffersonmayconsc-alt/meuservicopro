@@ -1,5 +1,5 @@
 -- ============================================================
--- Agenda Flex - migracao compativel para catalogo/portfolio
+-- Meu Servico Online - migracao compativel para catalogo/portfolio
 --
 -- Use em bancos ja criados com a versao anterior do schema.
 -- Mantem providers.service/duration/price porque o App.jsx atual

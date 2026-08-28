@@ -1,5 +1,5 @@
 -- ============================================================
--- Agenda Flex - dados de demonstracao
+-- Meu Servico Online - dados de demonstracao
 -- Rode depois de schema.sql. Replica o initialState que o app
 -- usava no localStorage, pra qualquer link ja testado continuar
 -- funcionando (slugs calculados com o mesmo algoritmo do app).
@@ -11,7 +11,7 @@ insert into public.platform_settings
    cancellation_window_hours, default_slot_interval, require_consent,
    allow_client_privacy_request, allow_provider_self_signup, allow_whatsapp_share, platform_fee_percent)
 values
-  (1, 'Agenda Flex', '#2563eb', 'contato@agendaflex.local', 'privacidade@agendaflex.local', 'manual',
+  (1, 'Meu Serviço Online', '#2563eb', 'contato@meuservicopro.local', 'privacidade@meuservicopro.local', 'manual',
    2, 30, 30, 60, 12, 60, true, true, true, true, 0)
 on conflict (id) do nothing;
 

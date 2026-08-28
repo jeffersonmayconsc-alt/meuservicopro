@@ -1,6 +1,6 @@
 # Spec — Portfólio e catálogo de serviços do prestador
 
-Spec de uma funcionalidade nova para o Agenda Flex: cada prestador passa a ter um **catálogo de serviços** (em vez de 1 serviço fixo) e um **portfólio de fotos**, tudo configurado livremente por ele — sem campos travados por profissão — para atender igualmente bem um barbeiro, um eletricista, ou qualquer outro tipo de prestador que venha a se cadastrar depois.
+Spec de uma funcionalidade nova para o Meu Serviço Online: cada prestador passa a ter um **catálogo de serviços** (em vez de 1 serviço fixo) e um **portfólio de fotos**, tudo configurado livremente por ele — sem campos travados por profissão — para atender igualmente bem um barbeiro, um eletricista, ou qualquer outro tipo de prestador que venha a se cadastrar depois.
 
 ## 1. Decisões de escopo (confirmadas com o Jefferson)
 
