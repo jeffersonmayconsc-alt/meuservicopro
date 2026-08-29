@@ -13,6 +13,7 @@ export function AccountSecurity({
   forcedPasswordChange,
   formatDateTime,
   loadAccountSessions,
+  minPasswordLength,
   passwordForm,
   passwordRecovery,
   session,
@@ -62,12 +63,13 @@ export function AccountSecurity({
         </label>}
         <div className="inlineFields">
           <label>Nova senha
-            <input type="password" autoComplete="new-password" minLength="8" value={passwordForm.next} onChange={(event) => setPasswordForm({ ...passwordForm, next: event.target.value })} required />
+            <input type="password" autoComplete="new-password" minLength={minPasswordLength} value={passwordForm.next} onChange={(event) => setPasswordForm({ ...passwordForm, next: event.target.value })} required />
           </label>
           <label>Confirmar nova senha
-            <input type="password" autoComplete="new-password" minLength="8" value={passwordForm.confirm} onChange={(event) => setPasswordForm({ ...passwordForm, confirm: event.target.value })} required />
+            <input type="password" autoComplete="new-password" minLength={minPasswordLength} value={passwordForm.confirm} onChange={(event) => setPasswordForm({ ...passwordForm, confirm: event.target.value })} required />
           </label>
         </div>
+        <small className="fieldCaption">Mínimo de {minPasswordLength} caracteres.</small>
         <button type="submit" className="primary accountPrimary">Atualizar senha</button>
       </form>
       <div className="panel sessionsPanel">

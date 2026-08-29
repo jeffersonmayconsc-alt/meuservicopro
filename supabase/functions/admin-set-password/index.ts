@@ -32,7 +32,9 @@ Deno.serve(async (request) => {
     const inviteToken = payload.inviteToken ? String(payload.inviteToken) : null
     if (!email || !email.includes('@')) return json({ error: 'Informe um e-mail válido.' }, 400)
 
-    const tempPassword = generateTempPassword()
+    const requestedLength = Number(payload.passwordLength) || 12
+    const passwordLength = Math.min(64, Math.max(12, requestedLength))
+    const tempPassword = generateTempPassword(passwordLength)
 
     let targetUser = null
     for (let page = 1; page <= 20 && !targetUser; page += 1) {

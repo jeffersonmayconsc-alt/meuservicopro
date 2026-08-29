@@ -61,6 +61,7 @@ const SETTINGS_COLUMN_MAP = {
   inviteSenderName: 'invite_sender_name',
   inviteSenderEmail: 'invite_sender_email',
   inviteReplyToEmail: 'invite_reply_to_email',
+  minPasswordLength: 'min_password_length',
 }
 
 const BRAND_COLUMN_MAP = {
@@ -115,6 +116,7 @@ function mapPlatformSettingsRow(row) {
       inviteSenderName: row.invite_sender_name || 'Meu Serviço Online',
       inviteSenderEmail: row.invite_sender_email || '',
       inviteReplyToEmail: row.invite_reply_to_email || '',
+      minPasswordLength: row.min_password_length || 8,
     },
   }
 }
@@ -485,6 +487,7 @@ function App() {
   const [forcedPasswordChange, setForcedPasswordChange] = useState(false)
   const [passwordProvisionNotice, setPasswordProvisionNotice] = useState(null)
   const [provisioningTarget, setProvisioningTarget] = useState('')
+  const [representativeSecurity, setRepresentativeSecurity] = useState({})
   const trackedAnalytics = useRef(new Set())
   const [publicProviderId, setPublicProviderId] = useState(null)
   const [publicEntryType, setPublicEntryType] = useState('agendar')
@@ -640,6 +643,26 @@ function App() {
       setRepresentativeInvites(invitesResult.data || [])
     })
   }, [session?.isMasterAdmin])
+
+  useEffect(() => {
+    if (!session?.isMasterAdmin || representatives.length === 0) {
+      setRepresentativeSecurity({})
+      return
+    }
+    supabase
+      .rpc('get_account_security_status', { target_user_ids: representatives.map((item) => item.user_id) })
+      .then(({ data: rows }) => {
+        const map = {}
+        for (const row of rows || []) {
+          map[row.user_id] = {
+            emailConfirmed: row.email_confirmed,
+            mustChangePassword: row.must_change_password,
+            lastSignInAt: row.last_sign_in_at,
+          }
+        }
+        setRepresentativeSecurity(map)
+      })
+  }, [session?.isMasterAdmin, representatives])
 
   const appearanceControl = (
     <div className="appearanceControl" role="group" aria-label="Aparência">
@@ -1896,8 +1919,9 @@ function App() {
   }
 
   const provisionAccountAccess = async (email, options = {}) => {
+    const passwordLength = Math.max(12, data.settings.minPasswordLength || 8)
     const { data: result, error } = await supabase.functions.invoke('admin-set-password', {
-      body: { email: email.trim().toLowerCase(), inviteToken: options.inviteToken || undefined },
+      body: { email: email.trim().toLowerCase(), inviteToken: options.inviteToken || undefined, passwordLength },
     })
     if (error || result?.error) {
       alert(result?.error || 'Não foi possível definir a senha de acesso.')
@@ -2184,8 +2208,9 @@ function App() {
       setLoginError('O primeiro acesso direto está disponível somente para o admin master.')
       return
     }
-    if (loginForm.password.length < 8) {
-      setLoginError('Crie uma senha com pelo menos 8 caracteres para o primeiro acesso.')
+    const minPasswordLength = data.settings.minPasswordLength || 8
+    if (loginForm.password.length < minPasswordLength) {
+      setLoginError(`Crie uma senha com pelo menos ${minPasswordLength} caracteres para o primeiro acesso.`)
       return
     }
     const { data: authData, error } = await supabase.auth.signUp({
@@ -2244,8 +2269,9 @@ function App() {
   const changeOwnPassword = async (event) => {
     event.preventDefault()
     setAccountNotice({ type: '', text: '' })
-    if (passwordForm.next.length < 8) {
-      setAccountNotice({ type: 'error', text: 'A nova senha precisa ter pelo menos 8 caracteres.' })
+    const minPasswordLength = data.settings.minPasswordLength || 8
+    if (passwordForm.next.length < minPasswordLength) {
+      setAccountNotice({ type: 'error', text: `A nova senha precisa ter pelo menos ${minPasswordLength} caracteres.` })
       return
     }
     if (passwordForm.next !== passwordForm.confirm) {
@@ -2954,6 +2980,7 @@ function App() {
           forcedPasswordChange={forcedPasswordChange}
           formatDateTime={formatDateTime}
           loadAccountSessions={loadAccountSessions}
+          minPasswordLength={data.settings.minPasswordLength || 8}
           passwordForm={passwordForm}
           passwordRecovery={passwordRecovery}
           session={session}
@@ -4036,7 +4063,13 @@ function App() {
                 <label>Taxa da plataforma em %
                   <input type="number" min="0" value={data.settings.platformFeePercent} onChange={(event) => updateSetting('platformFeePercent', Number(event.target.value))} />
                 </label>
+                <label>Tamanho mínimo de senha (caracteres)
+                  <input type="number" min="8" max="64" value={data.settings.minPasswordLength} onChange={(event) => updateSetting('minPasswordLength', Number(event.target.value))} />
+                </label>
               </div>
+              <p className="privacyHint">
+                Vale pra troca de senha (própria conta e primeiro acesso) e é o tamanho usado ao gerar senhas temporárias pelo admin — senhas temporárias nunca ficam abaixo de 12 caracteres, mesmo que o mínimo aqui seja menor.
+              </p>
 
               <div className="policySwitches">
                 <label className="checkLabel">
@@ -4161,15 +4194,23 @@ function App() {
                 </div>
               </div>}
               <div className="providerRows">
-                {representatives.map((representative) => <article className="providerRow" key={representative.user_id}>
-                  <div><strong>{representative.email}</strong><span>Representante • {representative.status}</span></div>
+                {representatives.map((representative) => {
+                  const security = representativeSecurity[representative.user_id]
+                  const securityHint = security?.mustChangePassword
+                    ? 'aguardando troca de senha'
+                    : security && !security.lastSignInAt
+                      ? 'nunca acessou'
+                      : ''
+                  return <article className="providerRow" key={representative.user_id}>
+                  <div><strong>{representative.email}</strong><span>Representante • {representative.status}{securityHint ? ` • ${securityHint}` : ''}</span></div>
                   <div className="shareActions">
                     <button type="button" className="secondaryAction" disabled={Boolean(provisioningTarget)} onClick={() => resetRepresentativePassword(representative)}>{provisioningTarget === representative.user_id ? 'Salvando...' : 'Definir senha'}</button>
                     <button type="button" className={representative.status === 'ativo' ? 'toggle on' : 'toggle'} onClick={() => changeRepresentativeStatus(representative)}>
                       {representative.status === 'ativo' ? 'Ativo' : 'Suspenso'}
                     </button>
                   </div>
-                </article>)}
+                </article>
+                })}
                 {representatives.length === 0 && <span className="emptyState">Nenhum representante aceitou um convite.</span>}
               </div>
               {representativeInvites.some((invite) => invite.status === 'ativo') && <div className="requestList">
