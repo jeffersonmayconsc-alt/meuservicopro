@@ -507,7 +507,7 @@ function App() {
   const [appearance, setAppearance] = useState(() => localStorage.getItem('agenda-appearance') || 'system')
   const [showPassword, setShowPassword] = useState(false)
   const [loginError, setLoginError] = useState('')
-  const [loginForm, setLoginForm] = useState({ email: MASTER_ADMIN_EMAIL, password: '' })
+  const [loginForm, setLoginForm] = useState({ email: '', password: '' })
   const [data, setData] = useState(null)
   const [loading, setLoading] = useState(true)
   const [loadError, setLoadError] = useState(null)
