@@ -187,6 +187,20 @@ Ou duplo clique em `iniciar-projeto.bat` (mesma coisa, com host fixo em `127.0.0
 
 Precisa de `.env.local` preenchido com `VITE_SUPABASE_URL`/`VITE_SUPABASE_ANON_KEY` (ver `.env.example`) e o projeto Supabase já rodado com `schema.sql` + `seed.sql` — passo a passo completo no README.
 
+**7.1 Como publicar em produção (regra importante, 2026-08-30): NUNCA publicar sem o Jefferson pedir explicitamente.** Build local (`npm run build`/`npm run lint`), commit local e até screenshot de verificação via harness/Playwright podem rodar livremente durante o trabalho — isso não é "publicar". O que **exige pedido explícito** antes de rodar:
+- `git push origin main` (o repositório é público-o-suficiente pra outros verem, e é o gatilho que expõe o código)
+- `npx vercel@latest --prod --yes` (deploy real do frontend — a integração automática GitHub→Vercel não é confiável, então esse é o comando que efetivamente publica; ver §3 dos fatos técnicos abaixo)
+- `supabase db push` (aplica migração no banco de produção/homologação — **Agend_Play**, ver memória do projeto)
+- `supabase functions deploy <nome>` (publica Edge Function)
+
+**Como aplicar**: terminar a mudança (build+lint+commit local+verificação visual), depois **parar e perguntar** "posso publicar?"/"quer que eu já publique?" antes de rodar qualquer um dos 4 comandos acima. Só pular essa pergunta se o próprio Jefferson já tiver pedido explicitamente ("implante e publique", "pode subir", etc.) na mesma mensagem que motivou a mudança — nesse caso o pedido já está dado, não precisa perguntar de novo pra cada commit dentro da mesma tarefa.
+
+**Fatos técnicos de deploy** (referência, não repetir a regra acima):
+1. Supabase CLI (`supabase`) já está instalado/logado/linkado ao projeto **Agend_Play** (`wjhalbcwpsgkwjymfgmg`) — não precisa colar SQL manual no painel.
+2. Edge Functions ficam em `supabase/functions/<nome>/index.ts`, deploy via `supabase functions deploy <nome>`.
+3. Frontend: projeto Vercel "meuservicopro" já linkado (`.vercel/project.json`). `npx vercel@latest --prod --yes` reconstrói e promove pra produção — é o caminho confirmado que funciona (às vezes a primeira tentativa falha com "Not authorized" por instabilidade passageira da Vercel; rodar de novo resolve).
+4. Depois de publicar, verificar com `curl` ou Playwright contra `https://meuservicopro.vercel.app/` (checar hash do bundle `assets/index-*.js` mudou, e/ou tirar screenshot) — não assumir que o deploy funcionou só porque o comando não deu erro.
+
 ---
 
 ## 8. Convenções de código observadas
@@ -202,7 +216,7 @@ Precisa de `.env.local` preenchido com `VITE_SUPABASE_URL`/`VITE_SUPABASE_ANON_K
 ## 9. Cookbook — como faço pra…
 
 ### 9.1 Adicionar coluna nova numa tabela existente
-1. `alter table` em `supabase/schema.sql` (é o arquivo que se roda manualmente no SQL Editor do Supabase — não há sistema de migration).
+1. `alter table` em `supabase/schema.sql` (fonte de verdade/referência) **e** em um arquivo novo de migration (`supabase/migrations/AAAAMMDDHHMMSS_nome.sql`) — desde 2026-08-29 existe sistema de migration de verdade com o Supabase CLI linkado (ver §7.1), não precisa mais colar SQL manual no painel. Rodar `supabase db push` só depois de ter pedido/recebido autorização pra publicar (§7.1).
 2. Atualizar `seed.sql` se fizer sentido ter dado de demo.
 3. Atualizar o `mapXRow` correspondente em `App.jsx`.
 4. Se for escrita: atualizar a função que faz o `supabase.from(...).update()/insert()` daquela tabela.
