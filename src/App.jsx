@@ -548,14 +548,17 @@ function App() {
   const [clientInviteToken, setClientInviteToken] = useState(null)
 
   const resolveAuthenticatedRole = async (user) => {
+    const { data: platformRole } = await supabase.rpc('get_my_platform_role')
+    if (platformRole === 'admin') return { role: 'admin', isMasterAdmin: true, isRepresentative: false }
+    if (platformRole === 'representante') return { role: 'admin', isMasterAdmin: false, isRepresentative: true }
+
     const representativeToken = getInviteToken('representante')
     if (representativeToken) {
       const { error } = await supabase.rpc('accept_representative_invite', { invite_token: representativeToken })
       if (error) throw new Error(error.message)
+      return { role: 'admin', isMasterAdmin: false, isRepresentative: true }
     }
-    const { data: platformRole } = await supabase.rpc('get_my_platform_role')
-    if (platformRole === 'admin') return { role: 'admin', isMasterAdmin: true, isRepresentative: false }
-    if (platformRole === 'representante') return { role: 'admin', isMasterAdmin: false, isRepresentative: true }
+
     const email = user.email?.toLowerCase() || ''
     return { role: email.startsWith('cliente@') ? 'cliente' : 'prestador', isMasterAdmin: false, isRepresentative: false }
   }
