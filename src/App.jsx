@@ -484,6 +484,7 @@ function App() {
   const [passwordRecovery, setPasswordRecovery] = useState(false)
   const [forcedPasswordChange, setForcedPasswordChange] = useState(false)
   const [passwordProvisionNotice, setPasswordProvisionNotice] = useState(null)
+  const [provisioningTarget, setProvisioningTarget] = useState('')
   const trackedAnalytics = useRef(new Set())
   const [publicProviderId, setPublicProviderId] = useState(null)
   const [publicEntryType, setPublicEntryType] = useState('agendar')
@@ -1904,21 +1905,33 @@ function App() {
   }
 
   const resetRepresentativePassword = async (representative) => {
-    await provisionAccountAccess(representative.email)
+    if (provisioningTarget) return
+    setProvisioningTarget(representative.user_id)
+    try {
+      await provisionAccountAccess(representative.email)
+    } finally {
+      setProvisioningTarget('')
+    }
   }
 
   const provisionRepresentativeInvite = async (invite) => {
-    const result = await provisionAccountAccess(invite.invited_email, { inviteToken: invite.token })
-    if (!result) return
-    if (!result.inviteFinalized) {
-      alert(result.inviteError || 'Senha criada, mas não foi possível concluir o vínculo do convite.')
+    if (provisioningTarget) return
+    setProvisioningTarget(invite.id)
+    try {
+      const result = await provisionAccountAccess(invite.invited_email, { inviteToken: invite.token })
+      if (!result) return
+      if (!result.inviteFinalized) {
+        alert(result.inviteError || 'Senha criada, mas não foi possível concluir o vínculo do convite.')
+      }
+      const [representativesResult, invitesResult] = await Promise.all([
+        supabase.from('platform_representatives').select('*').order('created_at', { ascending: false }),
+        supabase.from('representative_invites').select('*').order('created_at', { ascending: false }),
+      ])
+      setRepresentatives(representativesResult.data || [])
+      setRepresentativeInvites(invitesResult.data || [])
+    } finally {
+      setProvisioningTarget('')
     }
-    const [representativesResult, invitesResult] = await Promise.all([
-      supabase.from('platform_representatives').select('*').order('created_at', { ascending: false }),
-      supabase.from('representative_invites').select('*').order('created_at', { ascending: false }),
-    ])
-    setRepresentatives(representativesResult.data || [])
-    setRepresentativeInvites(invitesResult.data || [])
   }
 
   const transferProvider = async (providerId, representativeUserId) => {
@@ -4143,7 +4156,7 @@ function App() {
                 {representatives.map((representative) => <article className="providerRow" key={representative.user_id}>
                   <div><strong>{representative.email}</strong><span>Representante • {representative.status}</span></div>
                   <div className="shareActions">
-                    <button type="button" className="secondaryAction" onClick={() => resetRepresentativePassword(representative)}>Definir senha</button>
+                    <button type="button" className="secondaryAction" disabled={Boolean(provisioningTarget)} onClick={() => resetRepresentativePassword(representative)}>{provisioningTarget === representative.user_id ? 'Salvando...' : 'Definir senha'}</button>
                     <button type="button" className={representative.status === 'ativo' ? 'toggle on' : 'toggle'} onClick={() => changeRepresentativeStatus(representative)}>
                       {representative.status === 'ativo' ? 'Ativo' : 'Suspenso'}
                     </button>
@@ -4157,7 +4170,7 @@ function App() {
                   <div className="shareActions">
                     <small>Ativo</small>
                     <button type="button" className="secondaryAction" onClick={() => copyRepresentativeInviteLink(invite)}>Copiar link</button>
-                    <button type="button" className="secondaryAction" onClick={() => provisionRepresentativeInvite(invite)}>Criar acesso direto</button>
+                    <button type="button" className="secondaryAction" disabled={Boolean(provisioningTarget)} onClick={() => provisionRepresentativeInvite(invite)}>{provisioningTarget === invite.id ? 'Salvando...' : 'Criar acesso direto'}</button>
                   </div>
                 </article>)}
               </div>}
