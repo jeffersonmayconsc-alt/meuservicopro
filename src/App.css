@@ -56,8 +56,8 @@
   min-height: 610px;
   display: flex;
   flex-direction: column;
-  justify-content: space-between;
-  gap: 40px;
+  justify-content: flex-start;
+  gap: 32px;
   padding: 36px;
   border-right: 1px solid var(--border);
   background: var(--surface-subtle);
@@ -67,7 +67,7 @@
 .loginContextCopy h1 { max-width: 360px; font-size: 2.15rem; line-height: 1.15; }
 .loginContextCopy p { margin: 0; max-width: 360px; color: var(--text-soft); line-height: 1.65; }
 .loginKicker { color: var(--accent); font-size: .72rem; font-weight: 900; }
-.loginSecurity { display: flex; align-items: flex-start; gap: 10px; color: var(--text-soft); font-size: .82rem; line-height: 1.45; }
+.loginSecurity { display: flex; align-items: flex-start; gap: 10px; margin-top: auto; padding-top: 32px; color: var(--text-soft); font-size: .82rem; line-height: 1.45; }
 .loginSecurity svg { flex: 0 0 auto; color: var(--accent); }
 
 .loginAccess { padding: 36px 40px; display: grid; align-content: start; gap: 24px; }
@@ -108,6 +108,7 @@
 }
 
 .loginLogotype {
+  display: block;
   max-width: 220px;
   max-height: 64px;
   object-fit: contain;
