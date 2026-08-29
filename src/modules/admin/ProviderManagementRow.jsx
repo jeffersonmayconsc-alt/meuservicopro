@@ -89,6 +89,8 @@ export function ProviderManagementRow({
         <span className="fieldCaption">Conta de acesso</span>
         {provider.ownerUserId ? (
           <span className="ownerLinked"><UserRoundCheck size={15} /> Vinculada</span>
+        ) : !isMasterAdmin ? (
+          <span className="fieldCaption">Não vinculada</span>
         ) : linking ? (
           <form className="providerAccountLink" onSubmit={submitOwner}>
             <label className="srOnly" htmlFor={`owner-${provider.id}`}>E-mail da conta do prestador</label>
@@ -109,7 +111,7 @@ export function ProviderManagementRow({
             <button type="button" className="accountLinkTrigger" onClick={() => setProvisioning(true)}><KeyRound size={16} /> Criar acesso</button>
           </div>
         )}
-        {provisionResult && <div className="requestRow" role="status">
+        {isMasterAdmin && provisionResult && <div className="requestRow" role="status">
           <div><strong>{provisionResult.email}</strong><span>Senha temporária: <code>{provisionResult.tempPassword}</code></span></div>
           <div className="shareActions">
             <button type="button" className="secondaryAction" onClick={() => navigator.clipboard.writeText(provisionResult.tempPassword)}>Copiar</button>

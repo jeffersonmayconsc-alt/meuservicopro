@@ -4063,13 +4063,13 @@ function App() {
                 <label>Taxa da plataforma em %
                   <input type="number" min="0" value={data.settings.platformFeePercent} onChange={(event) => updateSetting('platformFeePercent', Number(event.target.value))} />
                 </label>
-                <label>Tamanho mínimo de senha (caracteres)
+                {session.isMasterAdmin && <label>Tamanho mínimo de senha (caracteres)
                   <input type="number" min="8" max="64" value={data.settings.minPasswordLength} onChange={(event) => updateSetting('minPasswordLength', Number(event.target.value))} />
-                </label>
+                </label>}
               </div>
-              <p className="privacyHint">
+              {session.isMasterAdmin && <p className="privacyHint">
                 Vale pra troca de senha (própria conta e primeiro acesso) e é o tamanho usado ao gerar senhas temporárias pelo admin — senhas temporárias nunca ficam abaixo de 12 caracteres, mesmo que o mínimo aqui seja menor.
-              </p>
+              </p>}
 
               <div className="policySwitches">
                 <label className="checkLabel">
