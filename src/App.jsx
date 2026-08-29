@@ -340,6 +340,7 @@ function App() {
   const [selectedProvider, setSelectedProvider] = useState(null)
   const [query, setQuery] = useState('')
   const [providerTab, setProviderTab] = useState('agenda')
+  const [adminTab, setAdminTab] = useState('visao-geral')
   const [agendaFilter, setAgendaFilter] = useState('todos')
   const [agendaDate, setAgendaDate] = useState(new Date().toISOString().slice(0, 10))
   const [clientFilter, setClientFilter] = useState('todos')
@@ -2497,23 +2498,66 @@ function App() {
         )}
 
         {view === 'admin' && (
-          <section className="grid two">
-            <div className="panel">
+          <section className="adminWorkspace">
+            <nav className="adminTabs" aria-label="Seções da administração">
+              <button className={adminTab === 'visao-geral' ? 'active' : ''} onClick={() => setAdminTab('visao-geral')}><LayoutDashboard size={18} /> Visão geral</button>
+              <button className={adminTab === 'prestadores' ? 'active' : ''} onClick={() => setAdminTab('prestadores')}><Store size={18} /> Prestadores</button>
+              <button className={adminTab === 'convites' ? 'active' : ''} onClick={() => setAdminTab('convites')}><Mail size={18} /> Convites</button>
+              <button className={adminTab === 'configuracoes' ? 'active' : ''} onClick={() => setAdminTab('configuracoes')}><Settings size={18} /> Configurações</button>
+              <button className={adminTab === 'privacidade' ? 'active' : ''} onClick={() => setAdminTab('privacidade')}><ShieldCheck size={18} /> Privacidade</button>
+            </nav>
+
+            {adminTab === 'visao-geral' && <div className="adminOverview">
+              <div className="metricGrid adminMetrics">
+                <Stat label="Prestadores" value={stats.providers} icon={<Store />} />
+                <Stat label="Prestadores ativos" value={stats.activeProviders} icon={<CheckCircle2 />} />
+                <Stat label="Clientes" value={data.clients.length} icon={<Users />} />
+                <Stat label="Pedidos LGPD" value={openPrivacyRequests} icon={<Shield />} />
+              </div>
+              <div className="adminOverviewGrid">
+                <div className="panel">
+                  <div className="panelHeader compact">
+                    <div><p className="eyebrow">Ações necessárias</p><h2>Pendências da gestão</h2></div>
+                    <AlertCircle size={22} />
+                  </div>
+                  <div className="managementActions">
+                    <button type="button" onClick={() => setAdminTab('prestadores')}><span><strong>Prestadores aguardando análise</strong><small>Revise e libere novos cadastros</small></span><strong>{data.providers.filter((item) => item.approvalStatus === 'analise').length}</strong></button>
+                    <button type="button" onClick={() => setAdminTab('privacidade')}><span><strong>Solicitações de privacidade</strong><small>Acompanhe pedidos ainda abertos</small></span><strong>{openPrivacyRequests}</strong></button>
+                    <button type="button" onClick={() => setAdminTab('convites')}><span><strong>Convidar novo prestador</strong><small>Gere um acesso controlado</small></span><Plus size={20} /></button>
+                  </div>
+                </div>
+                <div className="panel">
+                  <div className="panelHeader compact">
+                    <div><p className="eyebrow">Operação</p><h2>Políticas ativas</h2></div>
+                    <ShieldCheck size={22} />
+                  </div>
+                  <div className="parameterSummary overviewSummary">
+                    <span>Cadastro: {data.settings.allowProviderSelfSignup ? 'aberto' : 'somente por convite'}</span>
+                    <span>Aprovação: {data.settings.approvalMode === 'manual' ? 'manual' : 'automática'}</span>
+                    <span>Agenda: até {data.settings.maxAdvanceDays} dias</span>
+                    <span>Taxa: {data.settings.platformFeePercent}%</span>
+                  </div>
+                  <button type="button" className="secondaryAction overviewAction" onClick={() => setAdminTab('configuracoes')}>Revisar configurações</button>
+                </div>
+              </div>
+            </div>}
+
+            {(adminTab === 'prestadores' || adminTab === 'convites') && <div className="panel adminSectionPanel">
               <div className="panelHeader compact">
                 <div>
                   <p className="eyebrow">Gestão admin</p>
-                  <h2>Prestadores cadastrados</h2>
+                  <h2>{adminTab === 'prestadores' ? 'Prestadores cadastrados' : 'Convites de prestador'}</h2>
                 </div>
-                <Settings size={22} />
+                {adminTab === 'prestadores' ? <Store size={22} /> : <Mail size={22} />}
               </div>
 
-              <div className="metricGrid">
+              {adminTab === 'prestadores' && <div className="metricGrid">
                 <Stat label="Total" value={stats.providers} icon={<Store />} />
                 <Stat label="Ativos" value={stats.activeProviders} icon={<CheckCircle2 />} />
                 <Stat label="LGPD abertas" value={openPrivacyRequests} icon={<Shield />} />
-              </div>
+              </div>}
 
-              <form className="shareBox" onSubmit={createProviderInvite}>
+              {adminTab === 'convites' && <form className="shareBox" onSubmit={createProviderInvite}>
                 <div>
                   <strong>Convite de prestador</strong>
                   <input
@@ -2533,9 +2577,9 @@ function App() {
                     </button>
                   )}
                 </div>
-              </form>
+              </form>}
 
-              <div className="providerRows">
+              {adminTab === 'prestadores' && <div className="providerRows">
                 {data.providers.map((item) => (
                   <article className="providerRow" key={item.id}>
                     <div>
@@ -2551,9 +2595,10 @@ function App() {
                     )}
                   </article>
                 ))}
-              </div>
-            </div>
+              </div>}
+            </div>}
 
+            {adminTab === 'configuracoes' && <div className="adminSettingsGrid">
             <div className="panel form">
               <div className="panelHeader compact">
                 <div>
@@ -2634,8 +2679,9 @@ function App() {
                 </label>
               </div>
             </div>
+            </div>}
 
-            <div className="panel governancePanel">
+            {adminTab === 'privacidade' && <div className="panel governancePanel adminSectionPanel">
               <div className="panelHeader compact">
                 <div>
                   <p className="eyebrow">Governança</p>
@@ -2666,7 +2712,7 @@ function App() {
                 ))}
                 {data.privacyRequests.length === 0 && <span className="emptyText">Nenhuma solicitação registrada.</span>}
               </div>
-            </div>
+            </div>}
           </section>
         )}
       </section>
