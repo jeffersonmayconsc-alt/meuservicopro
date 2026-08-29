@@ -184,6 +184,11 @@
   grid-template-columns: 244px minmax(0, 1fr);
   background: var(--canvas);
   color: var(--text);
+  transition: grid-template-columns 0.18s ease;
+}
+
+.shell.sidebarCollapsed {
+  grid-template-columns: 76px minmax(0, 1fr);
 }
 
 .sidebar {
@@ -343,6 +348,58 @@
 
 .navChevron.open {
   transform: rotate(90deg);
+}
+
+@media (min-width: 961px) {
+  .sidebar.collapsed {
+    padding: 24px 12px;
+    align-items: center;
+  }
+
+  .sidebar.collapsed .navGroupLabel,
+  .sidebar.collapsed .navChevron,
+  .sidebar.collapsed .navSubList {
+    display: none;
+  }
+
+  .sidebar.collapsed .nav {
+    width: 100%;
+    justify-items: center;
+  }
+
+  .sidebar.collapsed .nav button {
+    width: 44px;
+    padding: 0;
+    gap: 0;
+    font-size: 0;
+    justify-content: center;
+  }
+
+  .sidebar.collapsed .sidebarAccountBar {
+    flex-direction: column;
+    gap: 12px;
+    padding: 0 0 16px;
+  }
+
+  .sidebar.collapsed .sidebarIdentity {
+    padding: 0;
+    justify-content: center;
+  }
+
+  .sidebar.collapsed .sidebarIdentity > div,
+  .sidebar.collapsed .sidebarIdentity .accountIndicator {
+    display: none;
+  }
+
+  .sidebar.collapsed .sidebarQuickActions {
+    flex-direction: column;
+  }
+}
+
+@media (max-width: 960px) {
+  .shell.sidebarCollapsed {
+    grid-template-columns: 1fr;
+  }
 }
 
 .currentArea { display: flex; align-items: center; gap: 10px; padding: 11px 12px; border-left: 2px solid var(--accent); color: #e2e8f0; }

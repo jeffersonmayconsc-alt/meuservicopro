@@ -532,6 +532,13 @@ function App() {
   const [analyticsDays, setAnalyticsDays] = useState(30)
   const [providerProfileTab, setProviderProfileTab] = useState('identidade')
   const [expandedNavGroup, setExpandedNavGroup] = useState('admin')
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(() => {
+    try {
+      return localStorage.getItem('agenda-sidebar-collapsed') === '1'
+    } catch {
+      return false
+    }
+  })
   const [adminTab, setAdminTab] = useState('visao-geral')
   const [agendaFilter, setAgendaFilter] = useState('todos')
   const [agendaDate, setAgendaDate] = useState(new Date().toISOString().slice(0, 10))
@@ -697,6 +704,23 @@ function App() {
         setRepresentativeSecurity(map)
       })
   }, [session?.isMasterAdmin, representatives])
+
+  const toggleSidebarCollapsed = () => {
+    setSidebarCollapsed((current) => {
+      const next = !current
+      try {
+        localStorage.setItem('agenda-sidebar-collapsed', next ? '1' : '0')
+      } catch {
+        // localStorage indisponível — segue sem persistir a preferência
+      }
+      return next
+    })
+  }
+
+  const expandSidebarGroup = (group) => {
+    setExpandedNavGroup((current) => (current === group ? null : group))
+    if (sidebarCollapsed) setSidebarCollapsed(false)
+  }
 
   const appearanceControl = (
     <div className="appearanceControl" role="group" aria-label="Aparência">
@@ -2810,9 +2834,9 @@ function App() {
   }
 
   return (
-    <main className="shell" style={{ '--accent': data.brand.accent, '--sidebar-logotype-height': `${data.brand.logotypeSize || 64}px` }}>
-      <aside className="sidebar">
-        {data.brand.logotypeUrl && <div className="brand sidebarBrand" title={data.brand.name}>
+    <main className={`shell${sidebarCollapsed ? ' sidebarCollapsed' : ''}`} style={{ '--accent': data.brand.accent, '--sidebar-logotype-height': `${data.brand.logotypeSize || 64}px` }}>
+      <aside className={`sidebar${sidebarCollapsed ? ' collapsed' : ''}`}>
+        {data.brand.logotypeUrl && !sidebarCollapsed && <div className="brand sidebarBrand" title={data.brand.name}>
           <img className="sidebarLogotype" src={data.brand.logotypeUrl} alt={data.brand.name} />
         </div>}
 
@@ -2837,6 +2861,9 @@ function App() {
             <button type="button" onClick={logout} title="Sair" aria-label="Sair da conta">
               <LogOut size={18} />
             </button>
+            <button type="button" onClick={toggleSidebarCollapsed} title={sidebarCollapsed ? 'Expandir menu' : 'Recolher menu'} aria-label={sidebarCollapsed ? 'Expandir menu' : 'Recolher menu'}>
+              <ChevronRight size={18} style={{ transform: sidebarCollapsed ? 'none' : 'rotate(180deg)' }} />
+            </button>
           </div>
         </div>
 
@@ -2854,7 +2881,7 @@ function App() {
           </nav>
         ) : session.role === 'admin' ? (
           <nav className="nav">
-            <button className={view === 'admin' ? 'active' : ''} onClick={() => { setView('admin'); setExpandedNavGroup(expandedNavGroup === 'admin' ? null : 'admin') }}>
+            <button className={view === 'admin' ? 'active' : ''} onClick={() => { setView('admin'); expandSidebarGroup('admin') }}>
               <LayoutDashboard size={18} /> Admin
               <ChevronRight size={16} className={`navChevron${expandedNavGroup === 'admin' ? ' open' : ''}`} />
             </button>
@@ -2894,7 +2921,7 @@ function App() {
             </div>
             <span className="navGroupLabel">Visualizar como</span>
             {session.isMasterAdmin && <>
-              <button className={view === 'representante' ? 'active' : ''} onClick={() => { setView('representante'); setExpandedNavGroup(expandedNavGroup === 'representante' ? null : 'representante') }}>
+              <button className={view === 'representante' ? 'active' : ''} onClick={() => { setView('representante'); expandSidebarGroup('representante') }}>
                 <Users size={18} /> Representante
                 <ChevronRight size={16} className={`navChevron${expandedNavGroup === 'representante' ? ' open' : ''}`} />
               </button>
@@ -2906,7 +2933,7 @@ function App() {
                 </div>
               </div>
             </>}
-            <button className={view === 'prestador' ? 'active' : ''} onClick={() => { setView('prestador'); setExpandedNavGroup(expandedNavGroup === 'prestador' ? null : 'prestador') }}>
+            <button className={view === 'prestador' ? 'active' : ''} onClick={() => { setView('prestador'); expandSidebarGroup('prestador') }}>
               <Store size={18} /> Prestador
               <ChevronRight size={16} className={`navChevron${expandedNavGroup === 'prestador' ? ' open' : ''}`} />
             </button>
