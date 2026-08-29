@@ -247,6 +247,14 @@
   height: 44px;
 }
 
+.sidebarLogoIcon {
+  display: block;
+  width: 40px;
+  height: 40px;
+  object-fit: contain;
+  margin: 0 auto;
+}
+
 .sidebarBrand { width: 100%; }
 
 .sidebarLogotype {
@@ -354,6 +362,11 @@
   .sidebar.collapsed {
     padding: 24px 12px;
     align-items: center;
+  }
+
+  .sidebar.collapsed .sidebarBrand {
+    min-height: auto;
+    width: 100%;
   }
 
   .sidebar.collapsed .navGroupLabel,
