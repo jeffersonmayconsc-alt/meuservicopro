@@ -38,15 +38,15 @@
 }
 
 .loginPanel {
-  width: min(960px, 100%);
+  width: min(1120px, 100%);
   display: grid;
   grid-template-columns: minmax(300px, .8fr) minmax(420px, 1.2fr);
   gap: 0;
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: 8px;
+  background: transparent;
+  border: 0;
+  border-radius: 0;
   padding: 0;
-  box-shadow: var(--shadow);
+  box-shadow: none;
   position: relative;
 }
 
@@ -58,14 +58,14 @@
   flex-direction: column;
   justify-content: flex-start;
   gap: 32px;
-  padding: 36px;
+  padding: 36px 56px 36px 8px;
   border-right: 1px solid var(--border);
-  background: var(--surface-subtle);
+  background: transparent;
 }
 
-.loginContextCopy { display: grid; gap: 14px; }
-.loginContextCopy h1 { max-width: 360px; font-size: 2.15rem; line-height: 1.15; }
-.loginContextCopy p { margin: 0; max-width: 360px; color: var(--text-soft); line-height: 1.65; }
+.loginContextCopy { display: grid; gap: 16px; }
+.loginContextCopy h1 { max-width: 420px; font-size: 3rem; font-weight: 800; line-height: 1.1; letter-spacing: -.01em; }
+.loginContextCopy p { margin: 0; max-width: 380px; color: var(--text-soft); line-height: 1.65; }
 .loginKicker { color: var(--accent); font-size: .72rem; font-weight: 900; }
 .loginFeatures { display: flex; flex-direction: column; gap: 8px; margin-top: 4px; }
 .loginFeatures span { display: flex; align-items: center; gap: 8px; color: var(--text-soft); font-size: .82rem; font-weight: 600; }
@@ -73,15 +73,17 @@
 .loginSecurity { display: flex; align-items: flex-start; gap: 10px; margin-top: auto; padding-top: 32px; color: var(--text-soft); font-size: .82rem; line-height: 1.45; }
 .loginSecurity svg { flex: 0 0 auto; color: var(--accent); }
 
-.loginAccess { padding: 36px 40px; display: grid; align-content: start; gap: 24px; }
+.loginAccess { padding: 36px 8px 36px 56px; display: grid; align-content: start; gap: 24px; max-width: 420px; }
 .loginAccessHeader { display: flex; justify-content: space-between; align-items: flex-start; gap: 20px; }
-.loginAccessHeader h2 { font-size: 1.45rem; }
+.loginAccessHeader h2 { font-size: 1.6rem; font-weight: 800; }
 .loginAccessHeader p { margin: 6px 0 0; color: var(--text-soft); }
 .loginAccessHeader .appearanceControl { grid-template-columns: repeat(3, 32px); }
 .loginAccessHeader .appearanceControl button { width: 32px; height: 28px; }
-.loginAccess .fieldWithIcon { min-height: 40px; grid-template-columns: 36px minmax(0, 1fr) 36px; }
-.loginAccess .fieldWithIcon input { min-height: 38px; }
-.loginAccess .fieldWithIcon button { width: 36px; height: 36px; }
+.loginAccess .fieldWithIcon { min-height: 48px; grid-template-columns: 40px minmax(0, 1fr) 40px; border-radius: 14px; }
+.loginAccess .fieldWithIcon input { min-height: 46px; }
+.loginAccess .fieldWithIcon button { width: 40px; height: 40px; }
+.loginAccess .loginSubmit,
+.loginAccess .secondaryButton { border-radius: 999px; min-height: 50px; }
 
 .loginForm { display: grid; gap: 16px; }
 
@@ -2141,6 +2143,7 @@ label {
   .loginContextCopy { display: none; }
   .loginSecurity { display: none; }
   .loginLogotype { max-width: 180px; max-height: 64px; margin: 0 auto; }
+  .loginAccess { padding: 28px; max-width: none; }
   .brand.loginBrand { justify-content: center; }
 
   .topbar,
