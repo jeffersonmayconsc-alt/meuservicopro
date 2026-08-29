@@ -29,7 +29,7 @@ create table public.platform_settings (
   default_slot_interval integer not null default 60,
   require_consent boolean not null default true,
   allow_client_privacy_request boolean not null default true,
-  allow_provider_self_signup boolean not null default true,
+  allow_provider_self_signup boolean not null default false,
   allow_whatsapp_share boolean not null default true,
   platform_fee_percent numeric(5,2) not null default 0
 );
@@ -142,6 +142,34 @@ create table public.privacy_requests (
 );
 create index privacy_requests_provider_id_idx on public.privacy_requests (provider_id);
 
+create table public.provider_invites (
+  id text primary key,
+  token text not null unique,
+  created_by_admin text not null,
+  invited_email text not null default '',
+  status text not null default 'ativo' check (status in ('ativo', 'usado', 'expirado', 'cancelado')),
+  expires_at timestamptz,
+  used_by_provider_id text references public.providers (id) on delete set null,
+  used_at timestamptz,
+  created_at timestamptz not null default now()
+);
+create index provider_invites_status_idx on public.provider_invites (status);
+
+create table public.client_invites (
+  id text primary key,
+  token text not null unique,
+  provider_id text not null references public.providers (id) on delete cascade,
+  created_by_provider_id text not null references public.providers (id) on delete cascade,
+  invited_contact text not null default '',
+  status text not null default 'ativo' check (status in ('ativo', 'usado', 'expirado', 'cancelado')),
+  expires_at timestamptz,
+  used_by_client_id text references public.clients (id) on delete set null,
+  used_at timestamptz,
+  created_at timestamptz not null default now()
+);
+create index client_invites_provider_id_idx on public.client_invites (provider_id);
+create index client_invites_status_idx on public.client_invites (status);
+
 -- RLS: aberto para anon (sem autenticação real nessa fase — ver aviso no topo do arquivo)
 alter table public.platform_settings enable row level security;
 alter table public.providers enable row level security;
@@ -152,6 +180,8 @@ alter table public.clients enable row level security;
 alter table public.provider_clients enable row level security;
 alter table public.blocked_slots enable row level security;
 alter table public.privacy_requests enable row level security;
+alter table public.provider_invites enable row level security;
+alter table public.client_invites enable row level security;
 
 create policy "anon_full_access" on public.platform_settings for all to anon, authenticated using (true) with check (true);
 create policy "anon_full_access" on public.providers        for all to anon, authenticated using (true) with check (true);
@@ -162,6 +192,8 @@ create policy "anon_full_access" on public.clients           for all to anon, au
 create policy "anon_full_access" on public.provider_clients  for all to anon, authenticated using (true) with check (true);
 create policy "anon_full_access" on public.blocked_slots     for all to anon, authenticated using (true) with check (true);
 create policy "anon_full_access" on public.privacy_requests  for all to anon, authenticated using (true) with check (true);
+create policy "anon_full_access" on public.provider_invites  for all to anon, authenticated using (true) with check (true);
+create policy "anon_full_access" on public.client_invites    for all to anon, authenticated using (true) with check (true);
 
 grant usage on schema public to anon, authenticated;
 grant select, insert, update, delete on all tables in schema public to anon, authenticated;

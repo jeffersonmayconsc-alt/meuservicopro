@@ -12,7 +12,7 @@ insert into public.platform_settings
    allow_client_privacy_request, allow_provider_self_signup, allow_whatsapp_share, platform_fee_percent)
 values
   (1, 'Meu Serviço Online', '#2563eb', 'contato@meuservicopro.local', 'privacidade@meuservicopro.local', 'manual',
-   2, 30, 30, 60, 12, 60, true, true, true, true, 0)
+   2, 30, 30, 60, 12, 60, true, true, false, true, 0)
 on conflict (id) do nothing;
 
 insert into public.providers

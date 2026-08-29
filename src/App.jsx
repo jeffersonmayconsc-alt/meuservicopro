@@ -199,6 +199,44 @@ function mapPrivacyRequestRow(row) {
   }
 }
 
+function mapProviderInviteRow(row) {
+  return {
+    id: row.id,
+    token: row.token,
+    createdByAdmin: row.created_by_admin,
+    invitedEmail: row.invited_email,
+    status: row.status,
+    expiresAt: row.expires_at,
+    usedByProviderId: row.used_by_provider_id,
+    usedAt: row.used_at,
+    createdAt: row.created_at,
+  }
+}
+
+function mapClientInviteRow(row) {
+  return {
+    id: row.id,
+    token: row.token,
+    providerId: row.provider_id,
+    createdByProviderId: row.created_by_provider_id,
+    invitedContact: row.invited_contact,
+    status: row.status,
+    expiresAt: row.expires_at,
+    usedByClientId: row.used_by_client_id,
+    usedAt: row.used_at,
+    createdAt: row.created_at,
+  }
+}
+
+async function optionalSelect(table) {
+  const { data, error } = await supabase.from(table).select('*')
+  if (error) {
+    console.warn(`Tabela opcional indisponivel: ${table}`, error.message)
+    return []
+  }
+  return data || []
+}
+
 async function fetchInitialData() {
   const [settingsRes, providersRes, providerServicesRes, bookingsRes, clientsRes, providerClientsRes, blockedSlotsRes, privacyRequestsRes] =
     await Promise.all([
@@ -230,6 +268,8 @@ async function fetchInitialData() {
     providerClients: providerClientsRes.data.map(mapProviderClientRow),
     blockedSlots: blockedSlotsRes.data.map(mapBlockedSlotRow),
     privacyRequests: privacyRequestsRes.data.map(mapPrivacyRequestRow),
+    providerInvites: (await optionalSelect('provider_invites')).map(mapProviderInviteRow),
+    clientInvites: (await optionalSelect('client_invites')).map(mapClientInviteRow),
   }
 }
 
@@ -241,6 +281,15 @@ function getLinkedProviderId() {
 function getPublicEntryType() {
   const params = new URLSearchParams(window.location.hash.replace('#', ''))
   return params.get('loja') ? 'loja' : 'agendar'
+}
+
+function getInviteToken(type) {
+  const params = new URLSearchParams(window.location.hash.replace('#', ''))
+  return params.get(type)
+}
+
+function tokenValue() {
+  return crypto.randomUUID().replaceAll('-', '')
 }
 
 function currency(value) {
@@ -321,6 +370,12 @@ function App() {
     price: 100,
     capacity: 6,
   })
+  const [providerInviteForm, setProviderInviteForm] = useState({ email: '' })
+  const [providerInviteNotice, setProviderInviteNotice] = useState('')
+  const [clientInviteForm, setClientInviteForm] = useState({ contact: '' })
+  const [clientInviteNotice, setClientInviteNotice] = useState('')
+  const [providerInviteToken, setProviderInviteToken] = useState(null)
+  const [clientInviteToken, setClientInviteToken] = useState(null)
 
   useEffect(() => {
     const media = window.matchMedia('(prefers-color-scheme: dark)')
@@ -349,6 +404,34 @@ function App() {
   }
 
   const resolvePublicRoute = (currentData) => {
+    const providerToken = getInviteToken('prestador')
+    if (providerToken) {
+      setProviderInviteToken(providerToken)
+      setClientInviteToken(null)
+      setPublicProviderId(null)
+      setSession(null)
+      return false
+    }
+
+    const clientToken = getInviteToken('cliente')
+    const clientInvite = currentData.clientInvites.find((invite) => invite.token === clientToken && invite.status === 'ativo')
+    if (clientInvite) {
+      const invitedProvider = currentData.providers.find((item) => item.id === clientInvite.providerId && item.active)
+      if (invitedProvider) {
+        setClientInviteToken(clientToken)
+        setPublicProviderId(invitedProvider.id)
+        setPublicEntryType('agendar')
+        setSelectedProvider(invitedProvider.id)
+        setSession({ role: 'cliente', providerId: invitedProvider.id, clientInviteToken: clientToken })
+        setView('cliente')
+        setBookingForm((current) => ({
+          ...current,
+          serviceId: currentData.providerServices.find((service) => service.providerId === invitedProvider.id && service.active)?.id || '',
+        }))
+        return true
+      }
+    }
+
     const providerKey = getLinkedProviderId()
     const entryType = getPublicEntryType()
     const linkedProvider = currentData.providers.find(
@@ -755,6 +838,20 @@ function App() {
         notes: bookingForm.notes,
       })
       if (bookingError) throw bookingError
+      if (clientInviteToken) {
+        await supabase
+          .from('client_invites')
+          .update({ status: 'usado', used_by_client_id: clientId, used_at: nowIso })
+          .eq('token', clientInviteToken)
+        updateData((current) => ({
+          ...current,
+          clientInvites: current.clientInvites.map((invite) =>
+            invite.token === clientInviteToken
+              ? { ...invite, status: 'usado', usedByClientId: clientId, usedAt: nowIso }
+              : invite,
+          ),
+        }))
+      }
     } catch {
       alert('O agendamento apareceu na tela, mas houve um erro ao salvar no banco de dados. Atualize a página para conferir se ficou salvo.')
     }
@@ -762,6 +859,15 @@ function App() {
 
   const createProvider = async (event) => {
     event.preventDefault()
+    const invite = providerInviteToken
+      ? data.providerInvites.find((item) => item.token === providerInviteToken && item.status === 'ativo')
+      : null
+
+    if (session?.role !== 'admin' && !invite && !data.settings.allowProviderSelfSignup) {
+      alert('Cadastro de prestador somente por convite do admin.')
+      return
+    }
+
     const id = crypto.randomUUID()
     const serviceId = crypto.randomUUID()
     const autoApprove = data.settings.approvalMode === 'automatico'
@@ -800,6 +906,13 @@ function App() {
       ...current,
       providers: [...current.providers, newProvider],
       providerServices: [...current.providerServices, newService],
+      providerInvites: invite
+        ? current.providerInvites.map((item) =>
+            item.id === invite.id
+              ? { ...item, status: 'usado', usedByProviderId: id, usedAt: createdAt }
+              : item,
+          )
+        : current.providerInvites,
     }))
     setProviderForm({ name: '', owner: '', category: '', city: '', service: '', duration: 50, price: 100, capacity: 6 })
     setSelectedProvider(id)
@@ -836,6 +949,12 @@ function App() {
       position: newService.position,
       created_at: newService.createdAt,
     })
+    if (invite) {
+      await supabase
+        .from('provider_invites')
+        .update({ status: 'usado', used_by_provider_id: id, used_at: createdAt })
+        .eq('id', invite.id)
+    }
     if (error || serviceError) alert('O cadastro apareceu na tela, mas houve um erro ao salvar no banco de dados. Atualize a pagina para conferir se ficou salvo.')
   }
 
@@ -1137,8 +1256,84 @@ function App() {
     if (error) alert('Não foi possível salvar essa alteração de marca no banco de dados. Tente novamente.')
   }
 
-  const getInviteLink = (targetProvider) => `${window.location.origin}${window.location.pathname}#agendar=${targetProvider.slug || targetProvider.id}`
+  const getInviteLink = (targetProvider) => {
+    const invite = data.clientInvites.find((item) => item.providerId === targetProvider.id && item.status === 'ativo')
+    return invite
+      ? `${window.location.origin}${window.location.pathname}#cliente=${invite.token}`
+      : `${window.location.origin}${window.location.pathname}#agendar=${targetProvider.slug || targetProvider.id}`
+  }
   const getStoreLink = (targetProvider) => `${window.location.origin}${window.location.pathname}#loja=${targetProvider.slug || targetProvider.id}`
+
+  const getProviderInviteLink = (invite) => `${window.location.origin}${window.location.pathname}#prestador=${invite.token}`
+
+  const createProviderInvite = async (event) => {
+    event.preventDefault()
+    const nowIso = new Date().toISOString()
+    const invite = {
+      id: crypto.randomUUID(),
+      token: tokenValue(),
+      createdByAdmin: 'admin-demo',
+      invitedEmail: providerInviteForm.email.trim().toLowerCase(),
+      status: 'ativo',
+      expiresAt: null,
+      usedByProviderId: null,
+      usedAt: null,
+      createdAt: nowIso,
+    }
+
+    updateData((current) => ({ ...current, providerInvites: [invite, ...current.providerInvites] }))
+    setProviderInviteForm({ email: '' })
+    setProviderInviteNotice(getProviderInviteLink(invite))
+
+    const { error } = await supabase.from('provider_invites').insert({
+      id: invite.id,
+      token: invite.token,
+      created_by_admin: invite.createdByAdmin,
+      invited_email: invite.invitedEmail,
+      status: invite.status,
+      expires_at: invite.expiresAt,
+      created_at: invite.createdAt,
+    })
+    if (error) setProviderInviteNotice('Convite criado na tela, mas a tabela provider_invites ainda precisa ser criada no Supabase.')
+  }
+
+  const createClientInvite = async (event) => {
+    event.preventDefault()
+    if (!provider || provider.approvalStatus !== 'aprovado') {
+      alert('Somente prestadores aprovados podem gerar link de cliente.')
+      return
+    }
+
+    const nowIso = new Date().toISOString()
+    const invite = {
+      id: crypto.randomUUID(),
+      token: tokenValue(),
+      providerId: provider.id,
+      createdByProviderId: provider.id,
+      invitedContact: clientInviteForm.contact.trim(),
+      status: 'ativo',
+      expiresAt: null,
+      usedByClientId: null,
+      usedAt: null,
+      createdAt: nowIso,
+    }
+
+    updateData((current) => ({ ...current, clientInvites: [invite, ...current.clientInvites] }))
+    setClientInviteForm({ contact: '' })
+    setClientInviteNotice(`${window.location.origin}${window.location.pathname}#cliente=${invite.token}`)
+
+    const { error } = await supabase.from('client_invites').insert({
+      id: invite.id,
+      token: invite.token,
+      provider_id: invite.providerId,
+      created_by_provider_id: invite.createdByProviderId,
+      invited_contact: invite.invitedContact,
+      status: invite.status,
+      expires_at: invite.expiresAt,
+      created_at: invite.createdAt,
+    })
+    if (error) setClientInviteNotice('Convite criado na tela, mas a tabela client_invites ainda precisa ser criada no Supabase.')
+  }
 
   const updateInviteDraft = (providerId, field, value) => {
     setInviteDrafts((current) => ({
@@ -1342,13 +1537,14 @@ function App() {
               <p className="demoCredentials">Ambiente demonstrativo: as credenciais já estão preenchidas.</p>
             </form>
 
-            {data.settings.allowProviderSelfSignup && <details className="signupDetails">
-              <summary>Ainda não possui cadastro? <strong>Solicitar acesso</strong></summary>
+            {(data.settings.allowProviderSelfSignup || providerInviteToken) && <details className="signupDetails" open={Boolean(providerInviteToken)}>
+              <summary>{providerInviteToken ? 'Convite do admin recebido' : 'Ainda nao possui cadastro?'} <strong>Solicitar acesso</strong></summary>
               <form className="signupInline" onSubmit={createProvider}>
               <div>
                 <p className="eyebrow">Novo prestador</p>
                 <h2>Solicitar cadastro</h2>
               </div>
+                {providerInviteToken && <p className="privacyHint">Este cadastro foi liberado por um link enviado pelo admin.</p>}
               <input required placeholder="Nome do negócio" value={providerForm.name} onChange={(event) => setProviderForm({ ...providerForm, name: event.target.value })} />
               <input required placeholder="Responsável" value={providerForm.owner} onChange={(event) => setProviderForm({ ...providerForm, owner: event.target.value })} />
               <div className="inlineFields">
@@ -1869,7 +2065,7 @@ function App() {
 
               <div className="shareBox">
                 <div>
-                  <strong>Link de convite</strong>
+                  <strong>Link de convite de cliente</strong>
                   <span>{getInviteLink(provider)}</span>
                 </div>
                 <div className="shareActions">
@@ -1886,6 +2082,26 @@ function App() {
                   </button>
                 </div>
               </div>
+
+              <form className="shareBox" onSubmit={createClientInvite}>
+                <div>
+                  <strong>Novo convite de cliente</strong>
+                  <input
+                    placeholder="E-mail ou WhatsApp do cliente"
+                    value={clientInviteForm.contact}
+                    onChange={(event) => setClientInviteForm({ contact: event.target.value })}
+                  />
+                  {clientInviteNotice && <span>{clientInviteNotice}</span>}
+                </div>
+                <div className="shareActions">
+                  <button type="submit">Gerar link</button>
+                  {clientInviteNotice && (
+                    <button type="button" className="secondaryAction" onClick={() => navigator.clipboard.writeText(clientInviteNotice)}>
+                      Copiar
+                    </button>
+                  )}
+                </div>
+              </form>
 
               <div className="shareBox">
                 <div>
@@ -2296,6 +2512,28 @@ function App() {
                 <Stat label="Ativos" value={stats.activeProviders} icon={<CheckCircle2 />} />
                 <Stat label="LGPD abertas" value={openPrivacyRequests} icon={<Shield />} />
               </div>
+
+              <form className="shareBox" onSubmit={createProviderInvite}>
+                <div>
+                  <strong>Convite de prestador</strong>
+                  <input
+                    type="email"
+                    placeholder="email@prestador.com.br"
+                    value={providerInviteForm.email}
+                    onChange={(event) => setProviderInviteForm({ email: event.target.value })}
+                    required
+                  />
+                  {providerInviteNotice && <span>{providerInviteNotice}</span>}
+                </div>
+                <div className="shareActions">
+                  <button type="submit">Gerar link</button>
+                  {providerInviteNotice && providerInviteNotice.startsWith('http') && (
+                    <button type="button" className="secondaryAction" onClick={() => navigator.clipboard.writeText(providerInviteNotice)}>
+                      Copiar
+                    </button>
+                  )}
+                </div>
+              </form>
 
               <div className="providerRows">
                 {data.providers.map((item) => (
