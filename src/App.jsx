@@ -3953,8 +3953,9 @@ function App() {
             {adminTab === 'configuracoes' && <div className="adminSettingsGrid singleColumn">
             <div className="profileTabs" role="tablist" aria-label="Seções de configurações">
               <button type="button" className={configSubTab === 'marca' ? 'active' : ''} onClick={() => setConfigSubTab('marca')}>Marca</button>
-              <button type="button" className={configSubTab === 'regras' ? 'active' : ''} onClick={() => setConfigSubTab('regras')}>Regras</button>
-              {session.isMasterAdmin && <button type="button" className={configSubTab === 'comunicados' ? 'active' : ''} onClick={() => setConfigSubTab('comunicados')}>Comunicados</button>}
+              <button type="button" className={configSubTab === 'operacao' ? 'active' : ''} onClick={() => setConfigSubTab('operacao')}>Operação</button>
+              {session.isMasterAdmin && <button type="button" className={configSubTab === 'seguranca' ? 'active' : ''} onClick={() => setConfigSubTab('seguranca')}>Segurança</button>}
+              {session.isMasterAdmin && <button type="button" className={configSubTab === 'comunicacao' ? 'active' : ''} onClick={() => setConfigSubTab('comunicacao')}>Comunicação</button>}
             </div>
 
             {configSubTab === 'marca' && (
@@ -4022,12 +4023,12 @@ function App() {
             </div>
             )}
 
-            {configSubTab === 'regras' && (
+            {configSubTab === 'operacao' && (
             <div className="panel settingsPanel">
               <div className="panelHeader compact">
                 <div>
                   <p className="eyebrow">Parâmetros</p>
-                  <h2>Regras da plataforma</h2>
+                  <h2>Operação da plataforma</h2>
                 </div>
                 <Settings size={22} />
               </div>
@@ -4063,13 +4064,7 @@ function App() {
                 <label>Taxa da plataforma em %
                   <input type="number" min="0" value={data.settings.platformFeePercent} onChange={(event) => updateSetting('platformFeePercent', Number(event.target.value))} />
                 </label>
-                {session.isMasterAdmin && <label>Tamanho mínimo de senha (caracteres)
-                  <input type="number" min="8" max="64" value={data.settings.minPasswordLength} onChange={(event) => updateSetting('minPasswordLength', Number(event.target.value))} />
-                </label>}
               </div>
-              {session.isMasterAdmin && <p className="privacyHint">
-                Vale pra troca de senha (própria conta e primeiro acesso) e é o tamanho usado ao gerar senhas temporárias pelo admin — senhas temporárias nunca ficam abaixo de 12 caracteres, mesmo que o mínimo aqui seja menor.
-              </p>}
 
               <div className="policySwitches">
                 <label className="checkLabel">
@@ -4085,41 +4080,38 @@ function App() {
                   Permitir compartilhamento via WhatsApp/nativo
                 </label>
               </div>
-              {session.isMasterAdmin && <div className="emailDeliverySettings">
-                <div className="panelHeader compact">
-                  <div><p className="eyebrow">E-mail transacional</p><h3>Envio de convite de representante</h3></div>
-                  <Mail size={20} />
-                </div>
-                <p className="privacyHint">
-                  Vale só pro convite de representante (aba Rede de representantes). Convite de prestador e de cliente não enviam e-mail — geram link pra você copiar e mandar manualmente.
-                </p>
-                <div className="settingsGrid">
-                  <label>Nome do remetente
-                    <input value={data.settings.inviteSenderName} onChange={(event) => updateSetting('inviteSenderName', event.target.value)} />
-                  </label>
-                  <label>E-mail remetente
-                    <input type="email" placeholder="convites@seudominio.com" value={data.settings.inviteSenderEmail} onChange={(event) => updateSetting('inviteSenderEmail', event.target.value)} />
-                  </label>
-                  <label>E-mail para respostas
-                    <input type="email" placeholder="contato@seudominio.com" value={data.settings.inviteReplyToEmail} onChange={(event) => updateSetting('inviteReplyToEmail', event.target.value)} />
-                  </label>
-                </div>
-                <div className="emailDeliveryFooter">
-                  <label className="checkLabel"><input type="checkbox" checked={data.settings.inviteEmailEnabled} onChange={(event) => updateSetting('inviteEmailEnabled', event.target.checked)} /> Envio automático</label>
-                  <span className={`emailConnectionStatus${inviteEmailConnection.configured ? ' connected' : ''}`}>
-                    {inviteEmailConnection.checked ? inviteEmailConnection.configured ? 'Conectado' : 'Não conectado' : 'Não verificado'}
-                  </span>
-                  <button type="button" className="secondaryAction" onClick={checkInviteEmailConnection}>Verificar conexão</button>
-                </div>
-              </div>}
             </div>
             )}
 
-            {configSubTab === 'comunicados' && session.isMasterAdmin && <div className="panel form">
+            {configSubTab === 'seguranca' && session.isMasterAdmin && (
+            <div className="panel settingsPanel">
+              <div className="panelHeader compact">
+                <div>
+                  <p className="eyebrow">Acesso</p>
+                  <h2>Segurança</h2>
+                </div>
+                <LockKeyhole size={22} />
+              </div>
+              <div className="settingsGrid">
+                <label>Tamanho mínimo de senha (caracteres)
+                  <input type="number" min="8" max="64" value={data.settings.minPasswordLength} onChange={(event) => updateSetting('minPasswordLength', Number(event.target.value))} />
+                </label>
+              </div>
+              <p className="privacyHint">
+                Vale pra troca de senha (própria conta e primeiro acesso) e é o tamanho usado ao gerar senhas temporárias pelo admin — senhas temporárias nunca ficam abaixo de 12 caracteres, mesmo que o mínimo aqui seja menor.
+              </p>
+              <p className="privacyHint">
+                Pra definir ou redefinir a senha de uma conta específica (representante ou prestador), use o botão "Definir senha"/"Criar acesso" na linha da conta, nas abas Prestadores ou Rede de representantes.
+              </p>
+            </div>
+            )}
+
+            {configSubTab === 'comunicacao' && session.isMasterAdmin && (
+            <div className="panel form">
               <div className="panelHeader compact">
                 <div>
                   <p className="eyebrow">Comunicação</p>
-                  <h2>Comunicados</h2>
+                  <h2>Comunicados internos</h2>
                 </div>
                 <Mail size={22} />
               </div>
@@ -4159,7 +4151,36 @@ function App() {
                 ))}
                 {data.announcements.length === 0 && <span className="emptyState">Nenhum comunicado publicado.</span>}
               </div>
-            </div>}
+
+              <div className="emailDeliverySettings">
+                <div className="panelHeader compact">
+                  <div><p className="eyebrow">E-mail transacional</p><h3>Envio de convite de representante</h3></div>
+                  <Mail size={20} />
+                </div>
+                <p className="privacyHint">
+                  Vale só pro convite de representante (aba Rede de representantes). Convite de prestador e de cliente não enviam e-mail — geram link pra você copiar e mandar manualmente.
+                </p>
+                <div className="settingsGrid">
+                  <label>Nome do remetente
+                    <input value={data.settings.inviteSenderName} onChange={(event) => updateSetting('inviteSenderName', event.target.value)} />
+                  </label>
+                  <label>E-mail remetente
+                    <input type="email" placeholder="convites@seudominio.com" value={data.settings.inviteSenderEmail} onChange={(event) => updateSetting('inviteSenderEmail', event.target.value)} />
+                  </label>
+                  <label>E-mail para respostas
+                    <input type="email" placeholder="contato@seudominio.com" value={data.settings.inviteReplyToEmail} onChange={(event) => updateSetting('inviteReplyToEmail', event.target.value)} />
+                  </label>
+                </div>
+                <div className="emailDeliveryFooter">
+                  <label className="checkLabel"><input type="checkbox" checked={data.settings.inviteEmailEnabled} onChange={(event) => updateSetting('inviteEmailEnabled', event.target.checked)} /> Envio automático</label>
+                  <span className={`emailConnectionStatus${inviteEmailConnection.configured ? ' connected' : ''}`}>
+                    {inviteEmailConnection.checked ? inviteEmailConnection.configured ? 'Conectado' : 'Não conectado' : 'Não verificado'}
+                  </span>
+                  <button type="button" className="secondaryAction" onClick={checkInviteEmailConnection}>Verificar conexão</button>
+                </div>
+              </div>
+            </div>
+            )}
             </div>}
 
             {(adminTab === 'representantes' || adminTab === 'visao-projeto') && session.isMasterAdmin && (
@@ -4284,11 +4305,13 @@ function App() {
                 <Stat label="Pedidos abertos" value={openPrivacyRequests} icon={<AlertCircle />} />
               </div>
               <div className="parameterSummary">
-                <span>Cadastro: {data.settings.allowProviderSelfSignup ? 'aberto' : 'fechado'}</span>
-                <span>Aprovação: {data.settings.approvalMode === 'manual' ? 'manual' : 'automática'}</span>
-                <span>Agenda: até {data.settings.maxAdvanceDays} dias</span>
-                <span>Retorno: {data.settings.returnAlertDays}/{data.settings.inactiveAlertDays} dias</span>
+                <span>Consentimento no agendamento: {data.settings.requireConsent ? 'obrigatório' : 'opcional'}</span>
+                <span>Solicitação de privacidade pelo cliente: {data.settings.allowClientPrivacyRequest ? 'permitida' : 'desativada'}</span>
+                <span>E-mail de privacidade: {data.brand.privacyEmail}</span>
               </div>
+              <p className="privacyHint">
+                Esses switches são editados em Configurações ? Operação. Aqui é só o acompanhamento dos pedidos.
+              </p>
               <div className="requestList">
                 {data.privacyRequests.map((request) => (
                   <article className="requestRow" key={request.id}>
