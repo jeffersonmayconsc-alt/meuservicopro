@@ -2104,7 +2104,7 @@ function App() {
     window.open(`https://wa.me/?text=${encodeURIComponent(text)}`, '_blank', 'noopener,noreferrer')
   }
 
-  const login = (role, providerId = 'p1', email = '', access = {}) => {
+  const login = (role, providerId = 'p1', email = '', access = {}, user = null) => {
     window.history.replaceState(null, '', window.location.pathname)
     setPublicProviderId(null)
     setPublicEntryType('agendar')
@@ -2116,7 +2116,12 @@ function App() {
       isRepresentative: access.isRepresentative ?? false,
     })
     setSelectedProvider(providerId)
-    setView(access.isRepresentative ? 'representante' : role === 'admin' ? 'admin' : role)
+    if (user?.user_metadata?.must_change_password) {
+      setForcedPasswordChange(true)
+      setView('conta')
+    } else {
+      setView(access.isRepresentative ? 'representante' : role === 'admin' ? 'admin' : role)
+    }
     setProviderTab('agenda')
   }
 
@@ -2155,7 +2160,7 @@ function App() {
       if (ownerError?.code === '42703') {
         // Coluna owner_user_id ainda não existe nesse banco (migração de vínculo
         // ainda não rodou) — cai no comportamento antigo em vez de bloquear o login.
-        login(role, selectedProvider, email, access)
+        login(role, selectedProvider, email, access, authData.user)
         return
       }
 
@@ -2165,11 +2170,11 @@ function App() {
         setAuthUser(null)
         return
       }
-      login(role, ownedProvider.id, email, access)
+      login(role, ownedProvider.id, email, access, authData.user)
       return
     }
 
-    login(role, undefined, email, access)
+    login(role, undefined, email, access, authData.user)
   }
 
   const createMasterAccess = async () => {
@@ -2198,7 +2203,7 @@ function App() {
     if (authData.session) {
       setAuthUser(authData.user)
       const access = await resolveAuthenticatedRole(authData.user)
-      login(access.role, undefined, email, access)
+      login(access.role, undefined, email, access, authData.user)
       return
     }
     setLoginError('Confira seu e-mail para confirmar o primeiro acesso.')
