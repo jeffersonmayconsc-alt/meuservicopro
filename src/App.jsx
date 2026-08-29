@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import {
   AlertCircle,
   ArrowDown,
@@ -6,12 +6,14 @@ import {
   CalendarCheck,
   CalendarDays,
   CheckCircle2,
+  ChevronRight,
   Clock3,
   Eye,
   EyeOff,
   Filter,
   Image,
   LayoutDashboard,
+  LogOut,
   LockKeyhole,
   Mail,
   MessageCircle,
@@ -30,9 +32,17 @@ import {
   Users,
 } from 'lucide-react'
 import { supabase } from './lib/supabaseClient'
+import { Stat } from './components/Stat'
+import { AccountSecurity } from './modules/account/AccountSecurity'
+import { ProviderManagementRow } from './modules/admin/ProviderManagementRow'
+import { ClientServiceHistory } from './modules/client/ClientServiceHistory'
+import { OperationalSummary } from './modules/provider/OperationalSummary'
+import { StorePerformance } from './modules/provider/StorePerformance'
+import { RepresentativePreview } from './modules/representative/RepresentativePreview'
 import './App.css'
 
 const times = ['08:00', '09:00', '10:00', '11:00', '14:00', '15:00', '16:00', '17:00']
+const MASTER_ADMIN_EMAIL = 'jeffersonmaycon.sc@gmail.com'
 
 const SETTINGS_COLUMN_MAP = {
   approvalMode: 'approval_mode',
@@ -47,11 +57,18 @@ const SETTINGS_COLUMN_MAP = {
   allowProviderSelfSignup: 'allow_provider_self_signup',
   allowWhatsAppShare: 'allow_whatsapp_share',
   platformFeePercent: 'platform_fee_percent',
+  inviteEmailEnabled: 'invite_email_enabled',
+  inviteSenderName: 'invite_sender_name',
+  inviteSenderEmail: 'invite_sender_email',
+  inviteReplyToEmail: 'invite_reply_to_email',
 }
 
 const BRAND_COLUMN_MAP = {
   name: 'brand_name',
   accent: 'brand_accent',
+  logoUrl: 'brand_logo_url',
+  logotypeUrl: 'brand_logotype_url',
+  logotypeSize: 'brand_logotype_size',
   support: 'brand_support',
   privacyEmail: 'brand_privacy_email',
 }
@@ -74,6 +91,9 @@ function mapPlatformSettingsRow(row) {
     brand: {
       name: row.brand_name,
       accent: row.brand_accent,
+      logoUrl: row.brand_logo_url || '',
+      logotypeUrl: row.brand_logotype_url || '',
+      logotypeSize: Number(row.brand_logotype_size || 64),
       support: row.brand_support,
       privacyEmail: row.brand_privacy_email,
     },
@@ -91,6 +111,10 @@ function mapPlatformSettingsRow(row) {
       allowWhatsAppShare: row.allow_whatsapp_share,
       // numeric colunas voltam como string do supabase-js — cast explícito.
       platformFeePercent: Number(row.platform_fee_percent),
+      inviteEmailEnabled: Boolean(row.invite_email_enabled),
+      inviteSenderName: row.invite_sender_name || 'Meu Serviço Online',
+      inviteSenderEmail: row.invite_sender_email || '',
+      inviteReplyToEmail: row.invite_reply_to_email || '',
     },
   }
 }
@@ -113,6 +137,9 @@ function mapProviderRow(row) {
     approvalStatus: row.approval_status,
     capacity: row.capacity,
     slug: row.slug,
+    ownerUserId: row.owner_user_id || null,
+    representativeUserId: row.representative_user_id || null,
+    showPrices: row.show_prices === undefined ? true : row.show_prices,
   }
 }
 
@@ -125,6 +152,19 @@ function mapProviderServiceRow(row) {
     price: Number(row.price),
     priceMode: row.price_mode,
     duration: row.duration,
+    active: row.active,
+    position: row.position,
+    createdAt: row.created_at,
+  }
+}
+
+function mapProviderResourceRow(row) {
+  return {
+    id: row.id,
+    providerId: row.provider_id,
+    name: row.name,
+    bio: row.bio,
+    photoUrl: row.photo_url,
     active: row.active,
     position: row.position,
     createdAt: row.created_at,
@@ -147,12 +187,14 @@ function mapBookingRow(row) {
     id: row.id,
     providerId: row.provider_id,
     serviceId: row.service_id,
+    resourceId: row.resource_id,
     client: row.client,
     contact: row.contact,
     date: row.date,
     time: row.time,
     status: row.status,
     notes: row.notes,
+    extraServices: row.extra_services || '',
   }
 }
 
@@ -185,6 +227,17 @@ function mapBlockedSlotRow(row) {
     date: row.date,
     time: row.time,
     reason: row.reason,
+    resourceId: row.resource_id,
+  }
+}
+
+function mapAnnouncementRow(row) {
+  return {
+    id: row.id,
+    title: row.title,
+    message: row.message,
+    active: row.active,
+    createdAt: row.created_at,
   }
 }
 
@@ -210,6 +263,8 @@ function mapProviderInviteRow(row) {
     usedByProviderId: row.used_by_provider_id,
     usedAt: row.used_at,
     createdAt: row.created_at,
+    representativeUserId: row.representative_user_id || null,
+    createdByUserId: row.created_by_user_id || null,
   }
 }
 
@@ -224,6 +279,18 @@ function mapClientInviteRow(row) {
     expiresAt: row.expires_at,
     usedByClientId: row.used_by_client_id,
     usedAt: row.used_at,
+    createdAt: row.created_at,
+  }
+}
+
+function mapAnalyticsEventRow(row) {
+  return {
+    id: row.id,
+    providerId: row.provider_id,
+    serviceId: row.service_id,
+    eventType: row.event_type,
+    visitorId: row.visitor_id,
+    source: row.source,
     createdAt: row.created_at,
   }
 }
@@ -262,6 +329,7 @@ async function fetchInitialData() {
     settings,
     providers: providersRes.data.map(mapProviderRow),
     providerServices: providerServicesRes.data.map(mapProviderServiceRow),
+    providerResources: (await optionalSelect('provider_resources')).map(mapProviderResourceRow),
     portfolioPhotos: [],
     bookings: bookingsRes.data.map(mapBookingRow),
     clients: clientsRes.data.map(mapClientRow),
@@ -270,6 +338,8 @@ async function fetchInitialData() {
     privacyRequests: privacyRequestsRes.data.map(mapPrivacyRequestRow),
     providerInvites: (await optionalSelect('provider_invites')).map(mapProviderInviteRow),
     clientInvites: (await optionalSelect('client_invites')).map(mapClientInviteRow),
+    analyticsEvents: (await optionalSelect('analytics_events')).map(mapAnalyticsEventRow),
+    announcements: (await optionalSelect('platform_announcements')).map(mapAnnouncementRow),
   }
 }
 
@@ -286,6 +356,68 @@ function getPublicEntryType() {
 function getInviteToken(type) {
   const params = new URLSearchParams(window.location.hash.replace('#', ''))
   return params.get(type)
+}
+
+function getSavedClient(providerId) {
+  try {
+    const raw = localStorage.getItem(`agenda-client-${providerId}`)
+    return raw ? JSON.parse(raw) : null
+  } catch {
+    return null
+  }
+}
+
+function saveClient(providerId, payload) {
+  try {
+    localStorage.setItem(`agenda-client-${providerId}`, JSON.stringify(payload))
+  } catch {
+    // localStorage indisponível (ex.: navegação privada) — segue sem salvar
+  }
+}
+
+function getVisitorId() {
+  const storageKey = 'agenda-analytics-visitor'
+  try {
+    const saved = localStorage.getItem(storageKey)
+    if (saved) return saved
+    const visitorId = crypto.randomUUID()
+    localStorage.setItem(storageKey, visitorId)
+    return visitorId
+  } catch {
+    return crypto.randomUUID()
+  }
+}
+
+function getTrafficSource() {
+  const source = new URLSearchParams(window.location.search).get('utm_source')
+  if (source) return source.slice(0, 80)
+  try {
+    return document.referrer ? new URL(document.referrer).hostname : 'direto'
+  } catch {
+    return 'direto'
+  }
+}
+
+function clearSavedClient(providerId) {
+  try {
+    localStorage.removeItem(`agenda-client-${providerId}`)
+  } catch {
+    // localStorage indisponível — nada a limpar
+  }
+}
+
+function preferredServiceId(currentData, providerId, saved) {
+  const activeServices = currentData.providerServices.filter((service) => service.providerId === providerId && service.active)
+  const savedService = saved?.lastServiceId && activeServices.find((service) => service.id === saved.lastServiceId)
+  return savedService?.id || activeServices[0]?.id || ''
+}
+
+function hasExistingConsent(currentData, providerId, contact) {
+  const normalizedContact = (contact || '').trim().toLowerCase()
+  if (!providerId || !normalizedContact) return false
+  const matchedClient = currentData.clients.find((client) => client.contact.toLowerCase() === normalizedContact)
+  if (!matchedClient) return false
+  return currentData.providerClients.some((link) => link.providerId === providerId && link.clientId === matchedClient.id && link.consent)
 }
 
 function tokenValue() {
@@ -309,15 +441,25 @@ function daysSince(date) {
   return Math.max(0, Math.floor((today - reference) / 86400000))
 }
 
-function formatServicePrice(service) {
+function formatServicePrice(service, showPrices = true) {
   if (!service) return ''
-  if (service.priceMode === 'sob_consulta') return 'Sob consulta'
+  if (!showPrices || service.priceMode === 'sob_consulta') return 'Sob consulta'
   if (service.priceMode === 'a_partir_de') return 'A partir de ' + currency(service.price)
   return currency(service.price)
 }
 
 function formatServiceDuration(service) {
-  return service?.duration ? service.duration + ' min' : 'Duracao variavel'
+  return service?.duration ? service.duration + ' min' : 'Duração variável'
+}
+
+function deviceName(userAgent = '') {
+  const browser = userAgent.includes('Edg/') ? 'Microsoft Edge' : userAgent.includes('Firefox/') ? 'Firefox' : userAgent.includes('Chrome/') ? 'Google Chrome' : userAgent.includes('Safari/') ? 'Safari' : 'Navegador'
+  const system = userAgent.includes('Windows') ? 'Windows' : userAgent.includes('Android') ? 'Android' : userAgent.includes('iPhone') || userAgent.includes('iPad') ? 'iOS' : userAgent.includes('Mac OS') ? 'macOS' : userAgent.includes('Linux') ? 'Linux' : 'Dispositivo desconhecido'
+  return `${browser} em ${system}`
+}
+
+function formatDateTime(value) {
+  return value ? new Intl.DateTimeFormat('pt-BR', { dateStyle: 'short', timeStyle: 'short' }).format(new Date(value)) : 'Data indisponível'
 }
 
 function serviceWithProvider(service, providers) {
@@ -329,17 +471,29 @@ function App() {
   const [appearance, setAppearance] = useState(() => localStorage.getItem('agenda-appearance') || 'system')
   const [showPassword, setShowPassword] = useState(false)
   const [loginError, setLoginError] = useState('')
-  const [loginForm, setLoginForm] = useState({ email: 'demo@meuservicopro.com.br', password: '123456' })
+  const [loginForm, setLoginForm] = useState({ email: MASTER_ADMIN_EMAIL, password: '' })
   const [data, setData] = useState(null)
   const [loading, setLoading] = useState(true)
   const [loadError, setLoadError] = useState(null)
   const [session, setSession] = useState(null)
+  const [authUser, setAuthUser] = useState(null)
+  const [accountSessions, setAccountSessions] = useState([])
+  const [accountLoading, setAccountLoading] = useState(false)
+  const [accountNotice, setAccountNotice] = useState({ type: '', text: '' })
+  const [passwordForm, setPasswordForm] = useState({ current: '', next: '', confirm: '' })
+  const [passwordRecovery, setPasswordRecovery] = useState(false)
+  const [forcedPasswordChange, setForcedPasswordChange] = useState(false)
+  const [passwordProvisionNotice, setPasswordProvisionNotice] = useState(null)
+  const trackedAnalytics = useRef(new Set())
   const [publicProviderId, setPublicProviderId] = useState(null)
   const [publicEntryType, setPublicEntryType] = useState('agendar')
   const [view, setView] = useState('cliente')
   const [selectedProvider, setSelectedProvider] = useState(null)
   const [query, setQuery] = useState('')
   const [providerTab, setProviderTab] = useState('agenda')
+  const [analyticsDays, setAnalyticsDays] = useState(30)
+  const [providerProfileTab, setProviderProfileTab] = useState('identidade')
+  const [expandedNavGroup, setExpandedNavGroup] = useState('admin')
   const [adminTab, setAdminTab] = useState('visao-geral')
   const [agendaFilter, setAgendaFilter] = useState('todos')
   const [agendaDate, setAgendaDate] = useState(new Date().toISOString().slice(0, 10))
@@ -349,11 +503,14 @@ function App() {
   const [privacyContact, setPrivacyContact] = useState('')
   const [privacyMessage, setPrivacyMessage] = useState('')
   const [blockForm, setBlockForm] = useState({ time: '11:00', reason: '' })
+  const [agendaResource, setAgendaResource] = useState('todos')
   const [inviteDrafts, setInviteDrafts] = useState({})
   const [loadedPortfolioProviders, setLoadedPortfolioProviders] = useState({})
   const [savedNotice, setSavedNotice] = useState('')
   const [bookingForm, setBookingForm] = useState({
     serviceId: '',
+    resourceId: '',
+    cartServiceIds: [],
     client: '',
     contact: '',
     date: new Date().toISOString().slice(0, 10),
@@ -375,8 +532,32 @@ function App() {
   const [providerInviteNotice, setProviderInviteNotice] = useState('')
   const [clientInviteForm, setClientInviteForm] = useState({ contact: '' })
   const [clientInviteNotice, setClientInviteNotice] = useState('')
+  const [representatives, setRepresentatives] = useState([])
+  const [representativeInvites, setRepresentativeInvites] = useState([])
+  const [representativeEmail, setRepresentativeEmail] = useState('')
+  const [announcementForm, setAnnouncementForm] = useState({ title: '', message: '' })
+  const [configSubTab, setConfigSubTab] = useState('marca')
+  const [representativeNotice, setRepresentativeNotice] = useState('')
+  const [representativeDeliveryNotice, setRepresentativeDeliveryNotice] = useState('')
+  const [representativeInviteLink, setRepresentativeInviteLink] = useState('')
+  const [inviteEmailConnection, setInviteEmailConnection] = useState({ checked: false, configured: false })
+  const [representativePreviewId, setRepresentativePreviewId] = useState('')
+  const [representativeTab, setRepresentativeTab] = useState('visao-geral')
   const [providerInviteToken, setProviderInviteToken] = useState(null)
   const [clientInviteToken, setClientInviteToken] = useState(null)
+
+  const resolveAuthenticatedRole = async (user) => {
+    const representativeToken = getInviteToken('representante')
+    if (representativeToken) {
+      const { error } = await supabase.rpc('accept_representative_invite', { invite_token: representativeToken })
+      if (error) throw new Error(error.message)
+    }
+    const { data: platformRole } = await supabase.rpc('get_my_platform_role')
+    if (platformRole === 'admin') return { role: 'admin', isMasterAdmin: true, isRepresentative: false }
+    if (platformRole === 'representante') return { role: 'admin', isMasterAdmin: false, isRepresentative: true }
+    const email = user.email?.toLowerCase() || ''
+    return { role: email.startsWith('cliente@') ? 'cliente' : 'prestador', isMasterAdmin: false, isRepresentative: false }
+  }
 
   useEffect(() => {
     const media = window.matchMedia('(prefers-color-scheme: dark)')
@@ -392,6 +573,70 @@ function App() {
     return () => media.removeEventListener('change', applyAppearance)
   }, [appearance])
 
+  useEffect(() => {
+    const link = document.querySelector('link[rel="icon"]')
+    if (!link) return
+    if (data?.brand?.logoUrl) {
+      link.href = data.brand.logoUrl
+      link.type = data.brand.logoUrl.match(/^data:([^;]+)/)?.[1] || 'image/png'
+    } else {
+      link.href = '/favicon.svg'
+      link.type = 'image/svg+xml'
+    }
+  }, [data?.brand?.logoUrl])
+
+  useEffect(() => {
+    if (!data || getInviteToken('prestador') || getInviteToken('cliente') || getLinkedProviderId()) return undefined
+
+    let active = true
+    supabase.auth.getSession().then(async ({ data: authData }) => {
+      if (!active || !authData.session?.user) return
+      const user = authData.session.user
+      const email = user.email?.toLowerCase() || ''
+      const access = await resolveAuthenticatedRole(user)
+      const role = access.role
+      const providerId = role === 'prestador' ? data.providers[0]?.id : undefined
+      setAuthUser(user)
+      setSession({ role, providerId, email, isMasterAdmin: access.isMasterAdmin, isRepresentative: access.isRepresentative })
+      setSelectedProvider(providerId || data.providers[0]?.id || null)
+      if (user.user_metadata?.must_change_password) {
+        setForcedPasswordChange(true)
+        setView('conta')
+      } else {
+        setView(access.isRepresentative ? 'representante' : role === 'admin' ? 'admin' : role)
+      }
+    })
+
+    const { data: listener } = supabase.auth.onAuthStateChange((event, authSession) => {
+      if (!active) return
+      setAuthUser(authSession?.user || null)
+      if (event === 'PASSWORD_RECOVERY') {
+        setPasswordRecovery(true)
+        setView('conta')
+      }
+      if (event === 'SIGNED_IN' && authSession?.user?.user_metadata?.must_change_password) {
+        setForcedPasswordChange(true)
+        setView('conta')
+      }
+    })
+
+    return () => {
+      active = false
+      listener.subscription.unsubscribe()
+    }
+  }, [data])
+
+  useEffect(() => {
+    if (!session?.isMasterAdmin) return
+    Promise.all([
+      supabase.from('platform_representatives').select('*').order('created_at', { ascending: false }),
+      supabase.from('representative_invites').select('*').order('created_at', { ascending: false }),
+    ]).then(([representativesResult, invitesResult]) => {
+      setRepresentatives(representativesResult.data || [])
+      setRepresentativeInvites(invitesResult.data || [])
+    })
+  }, [session?.isMasterAdmin])
+
   const appearanceControl = (
     <div className="appearanceControl" role="group" aria-label="Aparência">
       <button type="button" className={appearance === 'light' ? 'active' : ''} onClick={() => setAppearance('light')} title="Tema claro" aria-label="Usar tema claro"><Sun size={17} /></button>
@@ -403,6 +648,36 @@ function App() {
   const updateData = (producer) => {
     setData((current) => producer(current))
   }
+
+  const trackAnalyticsEvent = useCallback(async (eventType, targetService, allowRepeat = false) => {
+    if (!targetService?.providerId) return
+    const visitorId = getVisitorId()
+    const trackingKey = `${eventType}:${targetService.id}:${visitorId}`
+    if (!allowRepeat && trackedAnalytics.current.has(trackingKey)) return
+    trackedAnalytics.current.add(trackingKey)
+
+    const event = {
+      id: crypto.randomUUID(),
+      providerId: targetService.providerId,
+      serviceId: targetService.id,
+      eventType,
+      visitorId,
+      source: getTrafficSource(),
+      createdAt: new Date().toISOString(),
+    }
+
+    setData((current) => current ? { ...current, analyticsEvents: [...(current.analyticsEvents || []), event] } : current)
+    const { error } = await supabase.from('analytics_events').insert({
+      id: event.id,
+      provider_id: event.providerId,
+      service_id: event.serviceId,
+      event_type: event.eventType,
+      visitor_id: event.visitorId,
+      source: event.source,
+      created_at: event.createdAt,
+    })
+    if (error) console.warn('Não foi possível registrar o evento de desempenho.', error.message)
+  }, [])
 
   const resolvePublicRoute = (currentData) => {
     const providerToken = getInviteToken('prestador')
@@ -425,9 +700,13 @@ function App() {
         setSelectedProvider(invitedProvider.id)
         setSession({ role: 'cliente', providerId: invitedProvider.id, clientInviteToken: clientToken })
         setView('cliente')
+        const savedInvitedClient = getSavedClient(invitedProvider.id)
         setBookingForm((current) => ({
           ...current,
-          serviceId: currentData.providerServices.find((service) => service.providerId === invitedProvider.id && service.active)?.id || '',
+          client: savedInvitedClient?.name || current.client,
+          contact: savedInvitedClient?.contact || current.contact,
+          consent: current.consent || hasExistingConsent(currentData, invitedProvider.id, savedInvitedClient?.contact),
+          serviceId: preferredServiceId(currentData, invitedProvider.id, savedInvitedClient),
         }))
         return true
       }
@@ -446,9 +725,13 @@ function App() {
     setSelectedProvider(linkedProvider.id)
     setSession({ role: 'cliente', providerId: linkedProvider.id })
     setView('cliente')
+    const savedLinkedClient = getSavedClient(linkedProvider.id)
     setBookingForm((current) => ({
       ...current,
-      serviceId: currentData.providerServices.find((service) => service.providerId === linkedProvider.id && service.active)?.id || '',
+      client: savedLinkedClient?.name || current.client,
+      contact: savedLinkedClient?.contact || current.contact,
+      consent: current.consent || hasExistingConsent(currentData, linkedProvider.id, savedLinkedClient?.contact),
+      serviceId: preferredServiceId(currentData, linkedProvider.id, savedLinkedClient),
     }))
     return true
   }
@@ -490,6 +773,21 @@ function App() {
     window.addEventListener('hashchange', handlePublicRoute)
     return () => window.removeEventListener('hashchange', handlePublicRoute)
   }, [data])
+
+  useEffect(() => {
+    if (view !== 'conta' || !authUser) return
+    let active = true
+    supabase.rpc('list_my_auth_sessions').then(({ data: sessions, error }) => {
+      if (!active) return
+      setAccountLoading(false)
+      if (error) {
+        setAccountNotice({ type: 'error', text: 'Não foi possível consultar os dispositivos conectados.' })
+        return
+      }
+      setAccountSessions(sessions || [])
+    })
+    return () => { active = false }
+  }, [view, authUser])
 
   useEffect(() => {
     const providerId = publicProviderId || (providerTab === 'servicos' ? selectedProvider : null)
@@ -538,10 +836,30 @@ function App() {
       .includes(query.toLowerCase()),
   )
   const bookingService = publicServices.find((item) => item.id === bookingForm.serviceId) || publicServices[0]
+  const publicResources = data && bookingService
+    ? data.providerResources
+        .filter((resource) => resource.providerId === bookingService.providerId && resource.active)
+        .sort((first, second) => first.position - second.position || first.name.localeCompare(second.name))
+    : []
+  const cartServices = publicServices.filter((item) => bookingForm.cartServiceIds.includes(item.id) && item.id !== bookingService?.id)
+  const trackedServiceId = bookingService?.id
+  const trackedProviderId = bookingService?.providerId
+  const activeSessionRole = session?.role
+
+  useEffect(() => {
+    if (!activeSessionRole || view !== 'cliente' || activeSessionRole === 'admin' || publicEntryType !== 'agendar' || !trackedServiceId || !trackedProviderId) return
+    trackAnalyticsEvent('visualizou_servico', { id: trackedServiceId, providerId: trackedProviderId })
+  }, [view, activeSessionRole, publicEntryType, trackedServiceId, trackedProviderId, trackAnalyticsEvent])
+
   const provider = data ? data.providers.find((item) => item.id === selectedProvider) || data.providers[0] : null
   const providerServices = data && provider
     ? data.providerServices
         .filter((service) => service.providerId === provider.id)
+        .sort((first, second) => first.position - second.position || first.name.localeCompare(second.name))
+    : []
+  const providerResources = data && provider
+    ? data.providerResources
+        .filter((resource) => resource.providerId === provider.id)
         .sort((first, second) => first.position - second.position || first.name.localeCompare(second.name))
     : []
   const providerPhotos = data && provider
@@ -565,8 +883,12 @@ function App() {
         .sort((first, second) => `${first.date} ${first.time}`.localeCompare(`${second.date} ${second.time}`))
     : []
   const providerBlockedSlots = data ? data.blockedSlots.filter((slot) => slot.providerId === provider?.id) : []
-  const agendaDayBookings = providerBookings.filter((booking) => booking.date === agendaDate)
-  const agendaDayBlocks = providerBlockedSlots.filter((slot) => slot.date === agendaDate)
+  const agendaDayBookings = providerBookings
+    .filter((booking) => booking.date === agendaDate)
+    .filter((booking) => agendaResource === 'todos' || booking.resourceId === agendaResource)
+  const agendaDayBlocks = providerBlockedSlots
+    .filter((slot) => slot.date === agendaDate)
+    .filter((slot) => agendaResource === 'todos' || slot.resourceId === agendaResource)
   const providerClientLinks = data ? data.providerClients.filter((link) => link.providerId === provider?.id) : []
   const providerClients = providerClientLinks
     .map((link) => {
@@ -624,24 +946,80 @@ function App() {
     const bookedService = data.providerServices.find((service) => service.id === booking.serviceId)
     return bookedService?.priceMode === 'sob_consulta'
   }).length
-  const nextBookings = providerBookings.filter((booking) => booking.date >= today && booking.status !== 'cancelado').slice(0, 4)
+  const knownClientContacts = new Set(
+    [authUser?.email, bookingForm.contact, ...activeProviders.map((item) => getSavedClient(item.id)?.contact)]
+      .filter(Boolean)
+      .map((contact) => contact.trim().toLowerCase()),
+  )
+  const clientServiceHistory = data
+    ? data.bookings
+        .filter((booking) => knownClientContacts.has(booking.contact.trim().toLowerCase()))
+        .sort((first, second) => `${second.date} ${second.time}`.localeCompare(`${first.date} ${first.time}`))
+        .reduce((history, booking) => {
+          if (history.some((entry) => entry.provider.id === booking.providerId)) return history
+          const historyProvider = data.providers.find((item) => item.id === booking.providerId)
+          const historyService = data.providerServices.find((item) => item.id === booking.serviceId)
+          return historyProvider && historyService
+            ? [...history, { booking, provider: historyProvider, service: historyService }]
+            : history
+        }, [])
+    : []
+
+  const rebookService = (entry) => {
+    setBookingForm((current) => ({ ...current, serviceId: entry.service.id, date: today, time: '09:00', notes: '' }))
+    setPublicProviderId(entry.provider.id)
+    setPublicEntryType('agendar')
+    setSuccessMessage('')
+    window.history.replaceState(null, '', `#agendar=${entry.provider.slug || entry.provider.id}`)
+    trackAnalyticsEvent('iniciou_agendamento', entry.service)
+    window.setTimeout(() => document.querySelector('[data-booking-form]')?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 0)
+  }
+  const analyticsCutoff = new Date()
+  analyticsCutoff.setDate(analyticsCutoff.getDate() - analyticsDays)
+  const providerAnalytics = (data?.analyticsEvents || []).filter(
+    (event) => event.providerId === provider?.id && new Date(event.createdAt) >= analyticsCutoff,
+  )
+  const serviceViews = providerAnalytics.filter((event) => event.eventType === 'visualizou_servico').length
+  const bookingStarts = providerAnalytics.filter((event) => event.eventType === 'iniciou_agendamento').length
+  const generatedBookings = providerAnalytics.filter((event) => event.eventType === 'agendamento_concluido').length
+  const uniqueVisitors = new Set(providerAnalytics.map((event) => event.visitorId)).size
+  const funnelConversion = serviceViews ? Math.min(100, (generatedBookings / serviceViews) * 100) : 0
+  const startConversion = bookingStarts ? Math.min(100, (generatedBookings / bookingStarts) * 100) : 0
+  const providerServiceAnalytics = providerServices
+    .map((service) => {
+      const events = providerAnalytics.filter((event) => event.serviceId === service.id)
+      const views = events.filter((event) => event.eventType === 'visualizou_servico').length
+      const starts = events.filter((event) => event.eventType === 'iniciou_agendamento').length
+      const bookings = events.filter((event) => event.eventType === 'agendamento_concluido').length
+      return { ...service, views, starts, bookings, conversion: views ? Math.min(100, (bookings / views) * 100) : 0 }
+    })
+    .sort((first, second) => second.views - first.views)
+  const requiresResourceChoice = publicResources.length > 0
   const availableTimes = data
     ? times.map((time) => {
         const selectedBookingService = data.providerServices.find((service) => service.id === bookingForm.serviceId)
         const eligibleProviders = selectedBookingService
           ? activeProviders.filter((item) => item.id === selectedBookingService.providerId)
           : []
+        if (requiresResourceChoice && !bookingForm.resourceId) {
+          return { time, available: false }
+        }
         const hasProviderAvailable = eligibleProviders.some(
           (item) =>
             !data.blockedSlots.some(
-              (slot) => slot.providerId === item.id && slot.date === bookingForm.date && slot.time === time,
+              (slot) =>
+                slot.providerId === item.id &&
+                slot.date === bookingForm.date &&
+                slot.time === time &&
+                (!requiresResourceChoice || slot.resourceId === bookingForm.resourceId),
             ) &&
             !data.bookings.some(
               (booking) =>
                 booking.providerId === item.id &&
                 booking.date === bookingForm.date &&
                 booking.time === time &&
-                booking.status !== 'cancelado',
+                booking.status !== 'cancelado' &&
+                (!requiresResourceChoice || booking.resourceId === bookingForm.resourceId),
             ),
         )
 
@@ -675,6 +1053,12 @@ function App() {
     clients: uniqueClients,
     revenue,
   }
+  const representativePreviewProviders = data
+    ? data.providers.filter((item) => item.representativeUserId === (session?.isRepresentative ? authUser?.id : representativePreviewId))
+    : []
+  const representativePreviewInvites = data
+    ? data.providerInvites.filter((item) => item.representativeUserId === (session?.isRepresentative ? authUser?.id : representativePreviewId))
+    : []
   const openPrivacyRequests = data ? data.privacyRequests.filter((request) => request.status === 'aberta').length : 0
 
   const updateSetting = async (field, value) => {
@@ -689,25 +1073,49 @@ function App() {
     if (error) alert('Não foi possível salvar esse parâmetro no banco de dados. Tente novamente.')
   }
 
+  const toggleCartService = (serviceId) => {
+    setBookingForm((current) => ({
+      ...current,
+      cartServiceIds: current.cartServiceIds.includes(serviceId)
+        ? current.cartServiceIds.filter((id) => id !== serviceId)
+        : [...current.cartServiceIds, serviceId],
+    }))
+  }
+
   const createBooking = async (event) => {
     event.preventDefault()
     const selectedBookingService = data.providerServices.find((service) => service.id === bookingForm.serviceId)
+    const extraServicesText = data.providerServices
+      .filter((service) => bookingForm.cartServiceIds.includes(service.id) && service.id !== selectedBookingService?.id)
+      .map((service) => service.name)
+      .join(', ')
     const eligibleProviders = selectedBookingService
       ? activeProviders.filter((item) => item.id === selectedBookingService.providerId)
       : []
+    const providerRequiresResource = selectedBookingService
+      ? data.providerResources.some((resource) => resource.providerId === selectedBookingService.providerId && resource.active)
+      : false
+
+    if (providerRequiresResource && !bookingForm.resourceId) {
+      alert('Escolha com quem você quer agendar antes de confirmar.')
+      return
+    }
+
     const availableProvider = eligibleProviders.find(
       (item) =>
         !data.blockedSlots.some(
           (slot) =>
             slot.providerId === item.id &&
             slot.date === bookingForm.date &&
-            slot.time === bookingForm.time,
+            slot.time === bookingForm.time &&
+            (!providerRequiresResource || slot.resourceId === bookingForm.resourceId),
         ) &&
         !data.bookings.some((booking) =>
           booking.providerId === item.id &&
         booking.date === bookingForm.date &&
         booking.time === bookingForm.time &&
-        booking.status !== 'cancelado',
+        booking.status !== 'cancelado' &&
+        (!providerRequiresResource || booking.resourceId === bookingForm.resourceId),
         ),
     )
 
@@ -779,13 +1187,21 @@ function App() {
           time: bookingForm.time,
           notes: bookingForm.notes,
           serviceId: selectedBookingService.id,
+          resourceId: bookingForm.resourceId || null,
+          extraServices: extraServicesText,
           providerId: availableProvider.id,
           status: 'pendente',
         },
       ],
     }))
 
-    setBookingForm({ ...bookingForm, client: '', contact: '', notes: '', consent: false })
+    saveClient(availableProvider.id, {
+      name: bookingForm.client,
+      contact: bookingForm.contact,
+      lastServiceId: selectedBookingService.id,
+    })
+
+    setBookingForm({ ...bookingForm, client: '', contact: '', notes: '', consent: false, cartServiceIds: [] })
     setSuccessMessage('Agendamento solicitado. O prestador recebeu sua solicitação.')
     setSelectedProvider(availableProvider.id)
 
@@ -831,6 +1247,8 @@ function App() {
         id: bookingId,
         provider_id: availableProvider.id,
         service_id: selectedBookingService.id,
+        resource_id: bookingForm.resourceId || null,
+        extra_services: extraServicesText,
         client: bookingForm.client,
         contact: bookingForm.contact,
         date: bookingForm.date,
@@ -889,6 +1307,7 @@ function App() {
       active: autoApprove,
       approvalStatus: autoApprove ? 'aprovado' : 'analise',
       capacity: providerForm.capacity,
+      representativeUserId: invite?.representativeUserId || null,
     }
     const newService = {
       id: serviceId,
@@ -937,6 +1356,7 @@ function App() {
       approval_status: newProvider.approvalStatus,
       capacity: newProvider.capacity,
       slug: newProvider.slug,
+      representative_user_id: newProvider.representativeUserId,
     })
     const { error: serviceError } = await supabase.from('provider_services').insert({
       id: newService.id,
@@ -961,14 +1381,43 @@ function App() {
 
 
   const approveProvider = async (id) => {
+    const { error } = await supabase.from('providers').update({ active: true, approval_status: 'aprovado' }).eq('id', id)
+    if (error) {
+      alert('Não foi possível aprovar esse prestador no banco de dados. Tente novamente.')
+      return false
+    }
     updateData((current) => ({
       ...current,
       providers: current.providers.map((item) =>
         item.id === id ? { ...item, active: true, approvalStatus: 'aprovado' } : item,
       ),
     }))
-    const { error } = await supabase.from('providers').update({ active: true, approval_status: 'aprovado' }).eq('id', id)
-    if (error) alert('Não foi possível aprovar esse prestador no banco de dados. Tente novamente.')
+    return true
+  }
+
+  const linkProviderOwner = async (id, ownerEmail) => {
+    const email = ownerEmail.trim().toLowerCase()
+    if (!email.includes('@')) {
+      alert('Informe o e-mail que o prestador já usou para fazer login.')
+      return false
+    }
+    const { error } = await supabase.rpc('link_provider_owner', { target_provider_id: id, owner_email: email })
+    if (error) {
+      alert(error.message || 'Não foi possível vincular essa conta a esse prestador.')
+      return false
+    }
+    updateData((current) => ({
+      ...current,
+      providers: current.providers.map((item) => (item.id === id ? { ...item, ownerUserId: 'vinculado' } : item)),
+    }))
+    return true
+  }
+
+  const provisionProviderOwner = async (providerId, ownerEmail) => {
+    const result = await provisionAccountAccess(ownerEmail)
+    if (!result) return null
+    const linked = await linkProviderOwner(providerId, result.email)
+    return { email: result.email, tempPassword: result.tempPassword, linked }
   }
 
   const updateBookingStatus = async (id, status) => {
@@ -992,6 +1441,9 @@ function App() {
 
     const id = crypto.randomUUID()
     const reason = blockForm.reason || 'Indisponível'
+    // Com filtro em "todos" e recursos cadastrados, o bloqueio vale pra loja
+    // inteira (resourceId null); com um recurso selecionado, bloqueia só ele.
+    const blockResourceId = agendaResource === 'todos' ? null : agendaResource
 
     updateData((current) => ({
       ...current,
@@ -1003,6 +1455,7 @@ function App() {
           date: agendaDate,
           time: blockForm.time,
           reason,
+          resourceId: blockResourceId,
         },
       ],
     }))
@@ -1014,6 +1467,7 @@ function App() {
       date: agendaDate,
       time: blockForm.time,
       reason,
+      resource_id: blockResourceId,
     })
     if (error) alert('O bloqueio apareceu na tela, mas houve um erro ao salvar no banco de dados. Atualize a página para conferir se ficou salvo.')
   }
@@ -1101,6 +1555,56 @@ function App() {
       supabase.from('provider_services').update({ position: second.position }).eq('id', first.id),
       supabase.from('provider_services').update({ position: first.position }).eq('id', second.id),
     ])
+  }
+
+  const createProviderResource = async () => {
+    const id = crypto.randomUUID()
+    const nextPosition = providerResources.length
+    const resource = {
+      id,
+      providerId: provider.id,
+      name: 'Novo recurso',
+      bio: '',
+      photoUrl: '',
+      active: true,
+      position: nextPosition,
+      createdAt: new Date().toISOString(),
+    }
+
+    updateData((current) => ({ ...current, providerResources: [...current.providerResources, resource] }))
+    const { error } = await supabase.from('provider_resources').insert({
+      id,
+      provider_id: provider.id,
+      name: resource.name,
+      bio: resource.bio,
+      photo_url: resource.photoUrl,
+      active: resource.active,
+      position: resource.position,
+      created_at: resource.createdAt,
+    })
+    if (error) alert('Não foi possível salvar o novo recurso no banco de dados.')
+  }
+
+  const updateProviderResource = async (resourceId, field, value) => {
+    updateData((current) => ({
+      ...current,
+      providerResources: current.providerResources.map((resource) =>
+        resource.id === resourceId ? { ...resource, [field]: value } : resource,
+      ),
+    }))
+
+    const columnMap = { name: 'name', bio: 'bio', photoUrl: 'photo_url', active: 'active', position: 'position' }
+    const { error } = await supabase.from('provider_resources').update({ [columnMap[field]]: value }).eq('id', resourceId)
+    if (error) alert('Não foi possível salvar esse recurso no banco de dados.')
+  }
+
+  const removeProviderResource = async (resourceId) => {
+    updateData((current) => ({
+      ...current,
+      providerResources: current.providerResources.filter((resource) => resource.id !== resourceId),
+    }))
+    const { error } = await supabase.from('provider_resources').delete().eq('id', resourceId)
+    if (error) alert('Não foi possível remover esse recurso no banco de dados.')
   }
 
   const removeProviderService = async (serviceId) => {
@@ -1226,23 +1730,21 @@ function App() {
     const nextActive = !target.active
     const nextApprovalStatus = nextActive ? 'aprovado' : 'pausado'
 
-    updateData((current) => ({
-      ...current,
-      providers: current.providers.map((item) =>
-        item.id === id
-          ? {
-              ...item,
-              active: nextActive,
-              approvalStatus: nextApprovalStatus,
-            }
-          : item,
-      ),
-    }))
     const { error } = await supabase
       .from('providers')
       .update({ active: nextActive, approval_status: nextApprovalStatus })
       .eq('id', id)
-    if (error) alert('Não foi possível salvar essa alteração no banco de dados. Tente novamente.')
+    if (error) {
+      alert('Não foi possível salvar essa alteração no banco de dados. Tente novamente.')
+      return false
+    }
+    updateData((current) => ({
+      ...current,
+      providers: current.providers.map((item) =>
+        item.id === id ? { ...item, active: nextActive, approvalStatus: nextApprovalStatus } : item,
+      ),
+    }))
+    return true
   }
 
   const updateBrand = async (field, value) => {
@@ -1265,37 +1767,32 @@ function App() {
   }
   const getStoreLink = (targetProvider) => `${window.location.origin}${window.location.pathname}#loja=${targetProvider.slug || targetProvider.id}`
 
+  const buildWhatsAppLink = (client, targetProvider) => {
+    const message = `Olá, ${client.name}! Vamos agendar seu próximo atendimento? ${getInviteLink(targetProvider)}`
+    const digits = (client.contact || '').replace(/\D/g, '')
+    const looksLikePhone = !client.contact.includes('@') && digits.length >= 10 && digits.length <= 13
+    const phone = looksLikePhone ? (digits.length <= 11 ? `55${digits}` : digits) : ''
+    return `https://wa.me/${phone}?text=${encodeURIComponent(message)}`
+  }
+
   const getProviderInviteLink = (invite) => `${window.location.origin}${window.location.pathname}#prestador=${invite.token}`
+  const getRepresentativeInviteLink = (invite) => `${window.location.origin}${window.location.pathname}#representante=${invite.token}`
 
   const createProviderInvite = async (event) => {
     event.preventDefault()
-    const nowIso = new Date().toISOString()
-    const invite = {
-      id: crypto.randomUUID(),
-      token: tokenValue(),
-      createdByAdmin: 'admin-demo',
-      invitedEmail: providerInviteForm.email.trim().toLowerCase(),
-      status: 'ativo',
-      expiresAt: null,
-      usedByProviderId: null,
-      usedAt: null,
-      createdAt: nowIso,
+    const { data: createdInvite, error } = await supabase.rpc('create_scoped_provider_invite', {
+      target_email: providerInviteForm.email,
+    })
+    if (error) {
+      setProviderInviteNotice(error.message)
+      return
     }
+    const row = Array.isArray(createdInvite) ? createdInvite[0] : createdInvite
+    const invite = mapProviderInviteRow(row)
 
     updateData((current) => ({ ...current, providerInvites: [invite, ...current.providerInvites] }))
     setProviderInviteForm({ email: '' })
     setProviderInviteNotice(getProviderInviteLink(invite))
-
-    const { error } = await supabase.from('provider_invites').insert({
-      id: invite.id,
-      token: invite.token,
-      created_by_admin: invite.createdByAdmin,
-      invited_email: invite.invitedEmail,
-      status: invite.status,
-      expires_at: invite.expiresAt,
-      created_at: invite.createdAt,
-    })
-    if (error) setProviderInviteNotice('Convite criado na tela, mas a tabela provider_invites ainda precisa ser criada no Supabase.')
   }
 
   const createClientInvite = async (event) => {
@@ -1334,6 +1831,110 @@ function App() {
       created_at: invite.createdAt,
     })
     if (error) setClientInviteNotice('Convite criado na tela, mas a tabela client_invites ainda precisa ser criada no Supabase.')
+  }
+
+  const createRepresentativeInvite = async (event) => {
+    event.preventDefault()
+    setRepresentativeNotice('')
+    setRepresentativeDeliveryNotice('')
+    setRepresentativeInviteLink('')
+    const invitedEmail = representativeEmail.trim().toLowerCase()
+    const { data: createdInvite, error } = await supabase.rpc('create_representative_invite', {
+      target_email: invitedEmail,
+    })
+    if (error) {
+      setRepresentativeNotice(error.message)
+      return
+    }
+    const invite = Array.isArray(createdInvite) ? createdInvite[0] : createdInvite
+    setRepresentativeInvites((current) => [invite, ...current.filter((item) => item.status !== 'ativo' || item.invited_email !== invite.invited_email)])
+    setRepresentativeEmail('')
+    const inviteUrl = getRepresentativeInviteLink(invite)
+    setRepresentativeInviteLink(inviteUrl)
+    if (!data.settings.inviteEmailEnabled) {
+      setRepresentativeDeliveryNotice('Link criado. O envio automático está desativado.')
+      return
+    }
+    const { error: deliveryError } = await supabase.functions.invoke('send-representative-invite', {
+      body: { email: invitedEmail, inviteUrl },
+    })
+    setRepresentativeDeliveryNotice(deliveryError ? 'Link criado, mas o e-mail não foi enviado. Verifique a conexão de e-mail.' : 'Convite enviado por e-mail com sucesso.')
+  }
+
+  const checkInviteEmailConnection = async () => {
+    setInviteEmailConnection((current) => ({ ...current, checked: false }))
+    const { data: status, error } = await supabase.functions.invoke('send-representative-invite', {
+      body: { action: 'status' },
+    })
+    setInviteEmailConnection({ checked: true, configured: !error && Boolean(status?.configured) })
+  }
+
+  const copyRepresentativeInviteLink = async (invite) => {
+    try {
+      await navigator.clipboard.writeText(getRepresentativeInviteLink(invite))
+      setRepresentativeDeliveryNotice('Link do convite copiado.')
+    } catch {
+      setRepresentativeDeliveryNotice('Não foi possível copiar o link neste navegador.')
+    }
+  }
+
+  const changeRepresentativeStatus = async (representative) => {
+    const nextStatus = representative.status === 'ativo' ? 'suspenso' : 'ativo'
+    const { error } = await supabase.rpc('set_representative_status', {
+      target_user_id: representative.user_id,
+      next_status: nextStatus,
+    })
+    if (error) {
+      setRepresentativeNotice(error.message)
+      return
+    }
+    setRepresentatives((current) => current.map((item) => item.user_id === representative.user_id ? { ...item, status: nextStatus } : item))
+  }
+
+  const provisionAccountAccess = async (email, options = {}) => {
+    const { data: result, error } = await supabase.functions.invoke('admin-set-password', {
+      body: { email: email.trim().toLowerCase(), inviteToken: options.inviteToken || undefined },
+    })
+    if (error || result?.error) {
+      alert(result?.error || 'Não foi possível definir a senha de acesso.')
+      return null
+    }
+    setPasswordProvisionNotice({ email: result.email, tempPassword: result.tempPassword })
+    return result
+  }
+
+  const resetRepresentativePassword = async (representative) => {
+    await provisionAccountAccess(representative.email)
+  }
+
+  const provisionRepresentativeInvite = async (invite) => {
+    const result = await provisionAccountAccess(invite.invited_email, { inviteToken: invite.token })
+    if (!result) return
+    if (!result.inviteFinalized) {
+      alert(result.inviteError || 'Senha criada, mas não foi possível concluir o vínculo do convite.')
+    }
+    const [representativesResult, invitesResult] = await Promise.all([
+      supabase.from('platform_representatives').select('*').order('created_at', { ascending: false }),
+      supabase.from('representative_invites').select('*').order('created_at', { ascending: false }),
+    ])
+    setRepresentatives(representativesResult.data || [])
+    setRepresentativeInvites(invitesResult.data || [])
+  }
+
+  const transferProvider = async (providerId, representativeUserId) => {
+    const { error } = await supabase.rpc('transfer_provider_representative', {
+      target_provider_id: providerId,
+      target_representative_user_id: representativeUserId || null,
+    })
+    if (error) {
+      alert(error.message)
+      return false
+    }
+    updateData((current) => ({
+      ...current,
+      providers: current.providers.map((item) => item.id === providerId ? { ...item, representativeUserId: representativeUserId || null } : item),
+    }))
+    return true
   }
 
   const updateInviteDraft = (providerId, field, value) => {
@@ -1384,6 +1985,7 @@ function App() {
               inviteMessage: draft.inviteMessage,
               firstOffer: draft.firstOffer,
               theme: draft.theme,
+              showPrices: draft.showPrices,
             }
           : item,
       ),
@@ -1408,6 +2010,7 @@ function App() {
         invite_message: draft.inviteMessage,
         first_offer: draft.firstOffer,
         theme: draft.theme,
+        show_prices: draft.showPrices,
       })
       .eq('id', providerId)
     if (error) setSavedNotice('Erro ao salvar no banco de dados. Tente novamente.')
@@ -1418,6 +2021,54 @@ function App() {
 
     const reader = new FileReader()
     reader.onload = () => updateInviteDraft(providerId, 'logoUrl', reader.result)
+    reader.readAsDataURL(file)
+  }
+
+  const createAnnouncement = async (title, message) => {
+    if (!title.trim() || !message.trim()) return
+    const id = crypto.randomUUID()
+    const createdAt = new Date().toISOString()
+    updateData((current) => ({
+      ...current,
+      announcements: [{ id, title, message, active: true, createdAt }, ...current.announcements],
+    }))
+    const { error } = await supabase.from('platform_announcements').insert({ id, title, message, active: true, created_at: createdAt })
+    if (error) alert('Não foi possível salvar o comunicado no banco de dados.')
+  }
+
+  const toggleAnnouncement = async (id) => {
+    const current = data.announcements.find((item) => item.id === id)
+    if (!current) return
+    updateData((state) => ({
+      ...state,
+      announcements: state.announcements.map((item) => (item.id === id ? { ...item, active: !item.active } : item)),
+    }))
+    const { error } = await supabase.from('platform_announcements').update({ active: !current.active }).eq('id', id)
+    if (error) alert('Não foi possível atualizar esse comunicado no banco de dados.')
+  }
+
+  const removeAnnouncement = async (id) => {
+    updateData((current) => ({
+      ...current,
+      announcements: current.announcements.filter((item) => item.id !== id),
+    }))
+    const { error } = await supabase.from('platform_announcements').delete().eq('id', id)
+    if (error) alert('Não foi possível remover esse comunicado no banco de dados.')
+  }
+
+  const uploadBrandLogo = (file) => {
+    if (!file) return
+
+    const reader = new FileReader()
+    reader.onload = () => updateBrand('logoUrl', reader.result)
+    reader.readAsDataURL(file)
+  }
+
+  const uploadBrandLogotype = (file) => {
+    if (!file) return
+
+    const reader = new FileReader()
+    reader.onload = () => updateBrand('logotypeUrl', reader.result)
     reader.readAsDataURL(file)
   }
 
@@ -1437,34 +2088,199 @@ function App() {
     window.open(`https://wa.me/?text=${encodeURIComponent(text)}`, '_blank', 'noopener,noreferrer')
   }
 
-  const login = (role, providerId = 'p1') => {
+  const login = (role, providerId = 'p1', email = '', access = {}) => {
     window.history.replaceState(null, '', window.location.pathname)
     setPublicProviderId(null)
     setPublicEntryType('agendar')
-    setSession({ role, providerId })
+    setSession({
+      role,
+      providerId,
+      email,
+      isMasterAdmin: access.isMasterAdmin ?? email === MASTER_ADMIN_EMAIL,
+      isRepresentative: access.isRepresentative ?? false,
+    })
     setSelectedProvider(providerId)
-    setView(role === 'admin' ? 'admin' : role)
+    setView(access.isRepresentative ? 'representante' : role === 'admin' ? 'admin' : role)
     setProviderTab('agenda')
   }
 
-  const submitLogin = (event) => {
+  const submitLogin = async (event) => {
     event.preventDefault()
     setLoginError('')
-    if (!loginForm.email.includes('@') || loginForm.password.length < 6) {
-      setLoginError('Informe um e-mail válido e uma senha com pelo menos 6 caracteres.')
+    if (!loginForm.email.includes('@') || loginForm.password.length < 8) {
+      setLoginError('Informe um e-mail válido e uma senha com pelo menos 8 caracteres.')
       return
     }
     const email = loginForm.email.trim().toLowerCase()
-    const role = email.startsWith('admin@') ? 'admin' : email.startsWith('cliente@') ? 'cliente' : 'prestador'
-    login(role, role === 'prestador' ? selectedProvider : undefined)
+    const { data: authData, error } = await supabase.auth.signInWithPassword({ email, password: loginForm.password })
+    if (error || !authData.user) {
+      setLoginError('E-mail ou senha incorretos. Use uma conta cadastrada.')
+      return
+    }
+    setAuthUser(authData.user)
+    let access
+    try {
+      access = await resolveAuthenticatedRole(authData.user)
+    } catch (inviteError) {
+      setLoginError(inviteError.message)
+      await supabase.auth.signOut()
+      setAuthUser(null)
+      return
+    }
+    const role = access.role
+
+    if (role === 'prestador') {
+      const { data: ownedProvider, error: ownerError } = await supabase
+        .from('providers')
+        .select('id')
+        .eq('owner_user_id', authData.user.id)
+        .maybeSingle()
+
+      if (ownerError?.code === '42703') {
+        // Coluna owner_user_id ainda não existe nesse banco (migração de vínculo
+        // ainda não rodou) — cai no comportamento antigo em vez de bloquear o login.
+        login(role, selectedProvider, email, access)
+        return
+      }
+
+      if (ownerError || !ownedProvider) {
+        setLoginError('Sua conta ainda não está vinculada a um prestador. Peça para o admin vincular seu acesso na aba Prestadores.')
+        await supabase.auth.signOut()
+        setAuthUser(null)
+        return
+      }
+      login(role, ownedProvider.id, email, access)
+      return
+    }
+
+    login(role, undefined, email, access)
   }
 
-  const logout = () => {
+  const createMasterAccess = async () => {
+    const email = loginForm.email.trim().toLowerCase()
+    const isRepresentativeInvite = Boolean(getInviteToken('representante'))
+    if (email !== MASTER_ADMIN_EMAIL && !isRepresentativeInvite) {
+      setLoginError('O primeiro acesso direto está disponível somente para o admin master.')
+      return
+    }
+    if (loginForm.password.length < 8) {
+      setLoginError('Crie uma senha com pelo menos 8 caracteres para o primeiro acesso.')
+      return
+    }
+    const { data: authData, error } = await supabase.auth.signUp({
+      email,
+      password: loginForm.password,
+      options: {
+        data: isRepresentativeInvite ? { role: 'representante' } : { role: 'admin', admin_level: 'master' },
+        emailRedirectTo: window.location.href,
+      },
+    })
+    if (error) {
+      setLoginError(error.status === 429 ? 'Aguarde alguns minutos antes de solicitar outro acesso.' : 'Não foi possível criar o primeiro acesso.')
+      return
+    }
+    if (authData.session) {
+      setAuthUser(authData.user)
+      const access = await resolveAuthenticatedRole(authData.user)
+      login(access.role, undefined, email, access)
+      return
+    }
+    setLoginError('Confira seu e-mail para confirmar o primeiro acesso.')
+  }
+
+  const requestPasswordReset = async () => {
+    const email = loginForm.email.trim().toLowerCase()
+    if (!email.includes('@')) {
+      setLoginError('Informe seu e-mail para recuperar a senha.')
+      return
+    }
+    const { error } = await supabase.auth.resetPasswordForEmail(email, { redirectTo: window.location.origin })
+    setLoginError(error ? 'Não foi possível enviar o link de recuperação.' : 'Enviamos um link de recuperação para o seu e-mail.')
+  }
+
+  const logout = async () => {
+    if (authUser) await supabase.auth.signOut()
     window.history.replaceState(null, '', window.location.pathname)
     setPublicProviderId(null)
     setPublicEntryType('agendar')
     setSession(null)
+    setAuthUser(null)
     setView('cliente')
+  }
+
+  const loadAccountSessions = async () => {
+    setAccountLoading(true)
+    setAccountNotice({ type: '', text: '' })
+    const { data: sessions, error } = await supabase.rpc('list_my_auth_sessions')
+    setAccountLoading(false)
+    if (error) {
+      setAccountNotice({ type: 'error', text: 'Não foi possível consultar os dispositivos conectados.' })
+      return
+    }
+    setAccountSessions(sessions || [])
+  }
+
+  const changeOwnPassword = async (event) => {
+    event.preventDefault()
+    setAccountNotice({ type: '', text: '' })
+    if (passwordForm.next.length < 8) {
+      setAccountNotice({ type: 'error', text: 'A nova senha precisa ter pelo menos 8 caracteres.' })
+      return
+    }
+    if (passwordForm.next !== passwordForm.confirm) {
+      setAccountNotice({ type: 'error', text: 'A confirmação não corresponde à nova senha.' })
+      return
+    }
+    const email = authUser?.email
+    if (!email) return
+    if (!passwordRecovery && !forcedPasswordChange) {
+      const { error: verifyError } = await supabase.auth.signInWithPassword({ email, password: passwordForm.current })
+      if (verifyError) {
+        setAccountNotice({ type: 'error', text: 'A senha atual está incorreta.' })
+        return
+      }
+    }
+    const updatePayload = { password: passwordForm.next }
+    if (forcedPasswordChange) updatePayload.data = { must_change_password: false }
+    const { error } = await supabase.auth.updateUser(updatePayload)
+    if (error) {
+      setAccountNotice({ type: 'error', text: 'Não foi possível alterar a senha. Tente novamente.' })
+      return
+    }
+    setPasswordForm({ current: '', next: '', confirm: '' })
+    setPasswordRecovery(false)
+    setForcedPasswordChange(false)
+    setAccountNotice({ type: 'success', text: 'Senha alterada com sucesso.' })
+  }
+
+  const closeOtherSessions = async () => {
+    setAccountLoading(true)
+    setAccountNotice({ type: '', text: '' })
+    const { error } = await supabase.auth.signOut({ scope: 'others' })
+    if (error) {
+      setAccountLoading(false)
+      setAccountNotice({ type: 'error', text: 'Não foi possível encerrar as outras sessões.' })
+      return
+    }
+    await loadAccountSessions()
+    setAccountNotice({ type: 'success', text: 'As outras sessões foram encerradas.' })
+  }
+
+  const closeSelectedSessions = async (sessionIds) => {
+    if (!sessionIds.length) return false
+    setAccountLoading(true)
+    setAccountNotice({ type: '', text: '' })
+    const { data: revokedCount, error } = await supabase.rpc('revoke_my_auth_sessions', {
+      target_session_ids: sessionIds,
+    })
+    if (error) {
+      setAccountLoading(false)
+      setAccountNotice({ type: 'error', text: 'Não foi possível encerrar os dispositivos selecionados.' })
+      return false
+    }
+    await loadAccountSessions()
+    setAccountNotice({ type: 'success', text: `${revokedCount} ${revokedCount === 1 ? 'sessão encerrada' : 'sessões encerradas'} com sucesso.` })
+    return true
   }
 
   if (loading) {
@@ -1503,14 +2319,19 @@ function App() {
   }
 
   if (!session) {
+    const invalidPublicLink = getLinkedProviderId()
     return (
       <main className="loginShell" style={{ '--accent': data.brand.accent }}>
         <section className="loginPanel">
           <aside className="loginContext">
-            <div className="brand loginBrand">
-              <div className="brandMark"><CalendarCheck size={20} /></div>
-              <div><strong>{data.brand.name}</strong><span>Gestão de agenda</span></div>
-            </div>
+            {data.brand.logotypeUrl ? (
+              <img className="loginLogotype" src={data.brand.logotypeUrl} alt={data.brand.name} />
+            ) : (
+              <div className="brand loginBrand">
+                <div className="brandMark">{data.brand.logoUrl ? <img src={data.brand.logoUrl} alt="" /> : <CalendarCheck size={20} />}</div>
+                <div><strong>{data.brand.name}</strong><span>Gestão de agenda</span></div>
+              </div>
+            )}
             <div className="loginContextCopy">
               <span className="loginKicker">ACESSO SEGURO</span>
               <h1>Sua operação começa pela agenda.</h1>
@@ -1525,6 +2346,10 @@ function App() {
               {appearanceControl}
             </div>
 
+            {invalidPublicLink && (
+              <div className="loginError" role="alert"><AlertCircle size={17} />Este link de agendamento não está mais disponível.</div>
+            )}
+
             <form className="loginForm" onSubmit={submitLogin}>
               <label>E-mail
                 <div className="fieldWithIcon"><Mail size={18} /><input type="email" autoComplete="username" value={loginForm.email} onChange={(event) => setLoginForm({ ...loginForm, email: event.target.value })} placeholder="voce@empresa.com.br" /></div>
@@ -1532,10 +2357,10 @@ function App() {
               <label>Senha
                 <div className="fieldWithIcon"><LockKeyhole size={18} /><input type={showPassword ? 'text' : 'password'} autoComplete="current-password" value={loginForm.password} onChange={(event) => setLoginForm({ ...loginForm, password: event.target.value })} placeholder="Sua senha" /><button type="button" onClick={() => setShowPassword((current) => !current)} title={showPassword ? 'Ocultar senha' : 'Mostrar senha'} aria-label={showPassword ? 'Ocultar senha' : 'Mostrar senha'}>{showPassword ? <EyeOff size={18} /> : <Eye size={18} />}</button></div>
               </label>
-              <div className="loginOptions"><label className="remember"><input type="checkbox" defaultChecked /> Lembrar meu acesso</label><button type="button" className="textButton">Esqueci minha senha</button></div>
+              <div className="loginOptions"><label className="remember"><input type="checkbox" defaultChecked /> Lembrar meu acesso</label><button type="button" className="textButton" onClick={requestPasswordReset}>Esqueci minha senha</button></div>
               {loginError && <div className="loginError" role="alert"><AlertCircle size={17} />{loginError}</div>}
               <button className="primary loginSubmit" type="submit">Entrar</button>
-              <p className="demoCredentials">Ambiente demonstrativo: as credenciais já estão preenchidas.</p>
+              {(loginForm.email.trim().toLowerCase() === MASTER_ADMIN_EMAIL || getInviteToken('representante')) && <button className="secondaryButton" type="button" onClick={createMasterAccess}>{getInviteToken('representante') ? 'Criar acesso de representante' : 'Criar primeiro acesso'}</button>}
             </form>
 
             {(data.settings.allowProviderSelfSignup || providerInviteToken) && <details className="signupDetails" open={Boolean(providerInviteToken)}>
@@ -1570,10 +2395,12 @@ function App() {
 
   if (session.role === 'cliente' && publicProviderId && bookingService) {
     const activeProvider = bookingService.provider
+    const savedClient = getSavedClient(activeProvider.id)
     return (
       <main
         className="publicStorefront"
         style={{
+          '--accent': activeProvider.theme?.accent || data.brand.accent,
           '--provider-accent': activeProvider.theme?.accent,
           '--provider-bg': activeProvider.theme?.background,
         }}
@@ -1592,6 +2419,8 @@ function App() {
                 <button
                   className="storeCta"
                   onClick={() => {
+                    trackAnalyticsEvent('visualizou_servico', bookingService)
+                    trackAnalyticsEvent('iniciou_agendamento', bookingService)
                     window.location.hash = `agendar=${activeProvider.slug || activeProvider.id}`
                     setPublicEntryType('agendar')
                   }}
@@ -1601,6 +2430,13 @@ function App() {
               )}
             </div>
           </div>
+
+          <ClientServiceHistory
+            entries={clientServiceHistory}
+            formatDate={formatDate}
+            onRebook={rebookService}
+            providerId={activeProvider.id}
+          />
 
           {activeProvider.about && (
             <div className="panel aboutPanel">
@@ -1637,7 +2473,10 @@ function App() {
                       className="provider serviceCardPublic"
                       key={item.id}
                       onClick={() => {
-                        setBookingForm({ ...bookingForm, serviceId: item.id })
+                        trackAnalyticsEvent('visualizou_servico', item)
+                        trackAnalyticsEvent('iniciou_agendamento', item)
+                        setBookingForm({ ...bookingForm, serviceId: item.id, resourceId: '' })
+                        setSuccessMessage('')
                         window.location.hash = `agendar=${item.provider.slug || item.provider.id}`
                         setPublicEntryType('agendar')
                       }}
@@ -1645,10 +2484,11 @@ function App() {
                       {servicePhoto && <img src={servicePhoto.imageBase64} alt="" />}
                       <strong>{item.name}</strong>
                       <span>{item.description || item.provider.category}</span>
-                      <small>{formatServiceDuration(item)} • {formatServicePrice(item)}</small>
+                      <small>{formatServiceDuration(item)} • {formatServicePrice(item, item.provider.showPrices)}</small>
                     </button>
                   )
                 })}
+                {filteredServices.length === 0 && <span className="emptyState">Nenhum serviço encontrado.</span>}
               </div>
             </div>
           )}
@@ -1666,19 +2506,28 @@ function App() {
                   <button
                     className={bookingForm.serviceId === item.id ? 'provider selected' : 'provider'}
                     key={item.id}
-                    onClick={() => setBookingForm({ ...bookingForm, serviceId: item.id })}
+                    onClick={() => { trackAnalyticsEvent('visualizou_servico', item); trackAnalyticsEvent('iniciou_agendamento', item); setBookingForm({ ...bookingForm, serviceId: item.id, resourceId: '' }); setSuccessMessage('') }}
                   >
                     <strong>{item.name}</strong>
                     <span>{item.description || activeProvider.category}</span>
-                    <small>{formatServiceDuration(item)} • {formatServicePrice(item)}</small>
+                    <small>{formatServiceDuration(item)} • {formatServicePrice(item, item.provider.showPrices)}</small>
+                    <label className="checkLabel cartCheck" onClick={(event) => event.stopPropagation()}>
+                      <input
+                        type="checkbox"
+                        checked={bookingForm.cartServiceIds.includes(item.id)}
+                        onChange={() => toggleCartService(item.id)}
+                      />
+                      Também tenho interesse
+                    </label>
                   </button>
                 ))}
+                {filteredServices.length === 0 && <span className="emptyState">Nenhum serviço encontrado.</span>}
               </div>
             </div>
           )}
 
           {publicEntryType === 'agendar' && (
-            <form className="panel form" onSubmit={createBooking}>
+            <form className="panel form" data-booking-form onSubmit={createBooking} onFocusCapture={() => trackAnalyticsEvent('iniciou_agendamento', bookingService)}>
               <div className="panelHeader compact">
                 <div>
                   <p className="eyebrow">Novo agendamento</p>
@@ -1692,8 +2541,17 @@ function App() {
                   <span>Serviço selecionado</span>
                   <strong>{bookingService.name}</strong>
                   <small>
-                    {formatServiceDuration(bookingService)} • {formatServicePrice(bookingService)}
+                    {formatServiceDuration(bookingService)} • {formatServicePrice(bookingService, bookingService.provider.showPrices)}
                   </small>
+                </div>
+              )}
+
+              {cartServices.length > 0 && (
+                <div className="selectedService">
+                  <span>Também tem interesse em</span>
+                  {cartServices.map((item) => (
+                    <strong key={item.id}>{item.name}{item.provider.showPrices ? ` — ${formatServicePrice(item, true)}` : ''}</strong>
+                  ))}
                 </div>
               )}
 
@@ -1704,12 +2562,56 @@ function App() {
                 </div>
               )}
 
+              {savedClient && (
+                <p className="privacyHint">
+                  Bem-vindo(a) de volta, {savedClient.name}!{' '}
+                  <button
+                    type="button"
+                    className="textButton"
+                    onClick={() => {
+                      clearSavedClient(activeProvider.id)
+                      setBookingForm({ ...bookingForm, client: '', contact: '' })
+                    }}
+                  >
+                    Não é você? Limpar dados salvos
+                  </button>
+                </p>
+              )}
+
               <label>Nome do cliente
                 <input required value={bookingForm.client} onChange={(event) => setBookingForm({ ...bookingForm, client: event.target.value })} />
               </label>
               <label>E-mail ou WhatsApp
-                <input required value={bookingForm.contact} onChange={(event) => setBookingForm({ ...bookingForm, contact: event.target.value })} />
+                <input
+                  required
+                  value={bookingForm.contact}
+                  onChange={(event) => {
+                    const nextContact = event.target.value
+                    setBookingForm({
+                      ...bookingForm,
+                      contact: nextContact,
+                      consent: bookingForm.consent || hasExistingConsent(data, publicProviderId, nextContact),
+                    })
+                  }}
+                />
               </label>
+              {publicResources.length > 0 && (
+                <div className="timePicker">
+                  <strong>Com quem</strong>
+                  <div>
+                    {publicResources.map((resource) => (
+                      <button
+                        className={bookingForm.resourceId === resource.id ? 'selected' : ''}
+                        key={resource.id}
+                        onClick={() => setBookingForm({ ...bookingForm, resourceId: resource.id, time: '' })}
+                        type="button"
+                      >
+                        {resource.name}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
               <div className="inlineFields">
                 <label>Data
                   <input required max={maxBookingDate} min={today} type="date" value={bookingForm.date} onChange={(event) => setBookingForm({ ...bookingForm, date: event.target.value })} />
@@ -1746,7 +2648,9 @@ function App() {
                     Autorizo o uso do meu nome e contato para gerenciar este atendimento, retornos e comunicações com este prestador.
                   </label>
                   <p className="privacyHint">
-                    Seus dados ficam vinculados somente ao prestador deste link. Você pode solicitar acesso ou exclusão pelo canal de privacidade.
+                    {hasExistingConsent(data, publicProviderId, bookingForm.contact)
+                      ? 'Consentimento já registrado para esse contato com este prestador. Você pode revisar desmarcando a caixa acima.'
+                      : 'Seus dados ficam vinculados somente ao prestador deste link. Você pode solicitar acesso ou exclusão pelo canal de privacidade.'}
                   </p>
                 </>
               )}
@@ -1786,70 +2690,293 @@ function App() {
     )
   }
 
+  if (session.role === 'cliente' && publicProviderId && !bookingService) {
+    return (
+      <main className="publicStorefront">
+        <div className="publicStorefrontInner">
+          <div className="panel">
+            <p className="eyebrow">Agendamento indisponível</p>
+            <h2>Este prestador ainda não tem serviços disponíveis para agendamento.</h2>
+          </div>
+          <footer className="publicStorefrontFooter">
+            {appearanceControl}
+            <button type="button" className="textButton" onClick={logout}>Sair da pré-visualização</button>
+          </footer>
+        </div>
+      </main>
+    )
+  }
+
   return (
-    <main className="shell" style={{ '--accent': data.brand.accent }}>
+    <main className="shell" style={{ '--accent': data.brand.accent, '--sidebar-logotype-height': `${data.brand.logotypeSize || 64}px` }}>
       <aside className="sidebar">
-        <div className="brand">
-          <div className="brandMark"><CalendarCheck size={20} /></div>
-          <div>
-            <strong>{data.brand.name}</strong>
-            <span>Gestão de atendimentos</span>
+        {data.brand.logotypeUrl && <div className="brand sidebarBrand" title={data.brand.name}>
+          <img className="sidebarLogotype" src={data.brand.logotypeUrl} alt={data.brand.name} />
+        </div>}
+
+        <div className="sidebarAccountBar">
+          <button type="button" className={`sidebarIdentity${view === 'conta' ? ' active' : ''}`} onClick={() => { setAccountLoading(true); setView('conta') }} title="Abrir minha conta">
+            <span className="onlineDot" aria-hidden="true" />
+            <div>
+              <strong>{session.isMasterAdmin ? 'Admin master' : session.isRepresentative ? 'Representante' : session.role === 'admin' ? 'Administrador' : session.role === 'prestador' ? provider?.name || 'Prestador' : 'Cliente'}</strong>
+              <span>Minha conta</span>
+            </div>
+            <Settings className="accountIndicator" size={16} aria-hidden="true" />
+          </button>
+          <div className="sidebarQuickActions" aria-label="Ações rápidas">
+            <button
+              type="button"
+              onClick={() => setAppearance(appearance === 'light' ? 'system' : appearance === 'system' ? 'dark' : 'light')}
+              title={appearance === 'light' ? 'Tema claro' : appearance === 'dark' ? 'Tema escuro' : 'Tema do sistema'}
+              aria-label="Alternar aparência"
+            >
+              {appearance === 'light' ? <Sun size={18} /> : appearance === 'dark' ? <Moon size={18} /> : <Monitor size={18} />}
+            </button>
+            <button type="button" onClick={logout} title="Sair" aria-label="Sair da conta">
+              <LogOut size={18} />
+            </button>
           </div>
         </div>
 
-        {session.role === 'admin' ? (
+        {session.isRepresentative ? (
           <nav className="nav">
-            <>
-              <button className={view === 'admin' ? 'active' : ''} onClick={() => setView('admin')}>
-                <LayoutDashboard size={18} /> Admin
+            <button className={view === 'representante' && representativeTab === 'visao-geral' ? 'active' : ''} onClick={() => { setView('representante'); setRepresentativeTab('visao-geral') }}>
+              <LayoutDashboard size={18} /> Visão geral
+            </button>
+            <button className={view === 'representante' && representativeTab === 'carteira' ? 'active' : ''} onClick={() => { setView('representante'); setRepresentativeTab('carteira') }}>
+              <Store size={18} /> Minha carteira
+            </button>
+            <button className={view === 'representante' && representativeTab === 'convites' ? 'active' : ''} onClick={() => { setView('representante'); setRepresentativeTab('convites') }}>
+              <Mail size={18} /> Convites
+            </button>
+          </nav>
+        ) : session.role === 'admin' ? (
+          <nav className="nav">
+            <button className={view === 'admin' ? 'active' : ''} onClick={() => { setView('admin'); setExpandedNavGroup(expandedNavGroup === 'admin' ? null : 'admin') }}>
+              <LayoutDashboard size={18} /> Admin
+              <ChevronRight size={16} className={`navChevron${expandedNavGroup === 'admin' ? ' open' : ''}`} />
+            </button>
+            <div className={`navSubList${expandedNavGroup === 'admin' ? ' open' : ''}`}>
+            <div className="navSubListInner">
+              <button
+                className={view === 'admin' && adminTab === 'visao-geral' ? 'active' : ''}
+                onClick={() => { setView('admin'); setAdminTab('visao-geral') }}
+              >
+                Visão geral
               </button>
-              <button className={view === 'prestador' ? 'active' : ''} onClick={() => setView('prestador')}>
-                <Store size={18} /> Ver prestador
+              <button
+                className={view === 'admin' && (adminTab === 'prestadores' || adminTab === 'convites') ? 'active' : ''}
+                onClick={() => { setView('admin'); setAdminTab('prestadores') }}
+              >
+                Prestadores
               </button>
-              <button className={view === 'cliente' ? 'active' : ''} onClick={() => setView('cliente')}>
-                <CalendarDays size={18} /> Ver cliente
+              <button
+                className={view === 'admin' && adminTab === 'configuracoes' ? 'active' : ''}
+                onClick={() => { setView('admin'); setAdminTab('configuracoes') }}
+              >
+                Configurações
               </button>
-            </>
+              {session.isMasterAdmin && <button
+                className={view === 'admin' && (adminTab === 'representantes' || adminTab === 'visao-projeto') ? 'active' : ''}
+                onClick={() => { setView('admin'); setAdminTab('representantes') }}
+              >
+                Rede de representantes
+              </button>}
+              <button
+                className={view === 'admin' && adminTab === 'privacidade' ? 'active' : ''}
+                onClick={() => { setView('admin'); setAdminTab('privacidade') }}
+              >
+                Privacidade
+              </button>
+            </div>
+            </div>
+            <span className="navGroupLabel">Visualizar como</span>
+            {session.isMasterAdmin && <>
+              <button className={view === 'representante' ? 'active' : ''} onClick={() => { setView('representante'); setExpandedNavGroup(expandedNavGroup === 'representante' ? null : 'representante') }}>
+                <Users size={18} /> Representante
+                <ChevronRight size={16} className={`navChevron${expandedNavGroup === 'representante' ? ' open' : ''}`} />
+              </button>
+              <div className={`navSubList${expandedNavGroup === 'representante' ? ' open' : ''}`}>
+                <div className="navSubListInner">
+                  <button className={view === 'representante' && representativeTab === 'visao-geral' ? 'active' : ''} onClick={() => { setView('representante'); setRepresentativeTab('visao-geral') }}>Visão geral</button>
+                  <button className={view === 'representante' && representativeTab === 'carteira' ? 'active' : ''} onClick={() => { setView('representante'); setRepresentativeTab('carteira') }}>Minha carteira</button>
+                  <button className={view === 'representante' && representativeTab === 'convites' ? 'active' : ''} onClick={() => { setView('representante'); setRepresentativeTab('convites') }}>Convites</button>
+                </div>
+              </div>
+            </>}
+            <button className={view === 'prestador' ? 'active' : ''} onClick={() => { setView('prestador'); setExpandedNavGroup(expandedNavGroup === 'prestador' ? null : 'prestador') }}>
+              <Store size={18} /> Prestador
+              <ChevronRight size={16} className={`navChevron${expandedNavGroup === 'prestador' ? ' open' : ''}`} />
+            </button>
+            <div className={`navSubList${expandedNavGroup === 'prestador' ? ' open' : ''}`}>
+            <div className="navSubListInner">
+              <button
+                className={view === 'prestador' && providerTab === 'agenda' ? 'active' : ''}
+                onClick={() => { setView('prestador'); setProviderTab('agenda') }}
+              >
+                Agenda
+              </button>
+              <button
+                className={view === 'prestador' && providerTab === 'servicos' ? 'active' : ''}
+                onClick={() => { setView('prestador'); setProviderTab('servicos') }}
+              >
+                Serviços
+              </button>
+              <button
+                className={view === 'prestador' && providerTab === 'clientes' ? 'active' : ''}
+                onClick={() => { setView('prestador'); setProviderTab('clientes') }}
+              >
+                Clientes
+              </button>
+              <button
+                className={view === 'prestador' && providerTab === 'insights' ? 'active' : ''}
+                onClick={() => { setView('prestador'); setProviderTab('insights') }}
+              >
+                Resumo operacional
+              </button>
+              <button
+                className={view === 'prestador' && providerTab === 'desempenho' ? 'active' : ''}
+                onClick={() => { setView('prestador'); setProviderTab('desempenho') }}
+              >
+                Desempenho da loja
+              </button>
+              <button
+                className={view === 'prestador' && providerTab === 'loja' ? 'active' : ''}
+                onClick={() => { setView('prestador'); setProviderTab('loja') }}
+              >
+                Minha loja
+              </button>
+            </div>
+            </div>
+            <button className={view === 'cliente' ? 'active' : ''} onClick={() => { setView('cliente'); setExpandedNavGroup(null) }}>
+              <CalendarDays size={18} /> Cliente
+            </button>
+          </nav>
+        ) : session.role === 'prestador' ? (
+          <nav className="nav">
+            <button className={providerTab === 'agenda' ? 'active' : ''} onClick={() => setProviderTab('agenda')}>
+              <CalendarCheck size={18} /> Agenda
+            </button>
+            <button className={providerTab === 'servicos' ? 'active' : ''} onClick={() => setProviderTab('servicos')}>
+              <Store size={18} /> Serviços
+            </button>
+            <button className={providerTab === 'clientes' ? 'active' : ''} onClick={() => setProviderTab('clientes')}>
+              <Users size={18} /> Clientes
+            </button>
+            <button className={providerTab === 'insights' ? 'active' : ''} onClick={() => setProviderTab('insights')}>
+              <LayoutDashboard size={18} /> Resumo
+            </button>
+            <button className={providerTab === 'desempenho' ? 'active' : ''} onClick={() => setProviderTab('desempenho')}>
+              <TrendingUp size={18} /> Desempenho da loja
+            </button>
+            <button className={providerTab === 'loja' ? 'active' : ''} onClick={() => setProviderTab('loja')}>
+              <Store size={18} /> Minha loja
+            </button>
           </nav>
         ) : (
-          <div className="currentArea">{session.role === 'prestador' ? <Store size={18} /> : <CalendarDays size={18} />}<div><span>Área atual</span><strong>{session.role === 'prestador' ? provider?.name : 'Cliente'}</strong></div></div>
+          <div className="currentArea"><CalendarDays size={18} /><div><span>Área atual</span><strong>Cliente</strong></div></div>
         )}
 
-        <div className="sidebarAppearance">
-          <span>Aparência</span>
-          {appearanceControl}
-        </div>
-
-        <div className="statusBox">
-          <CheckCircle2 size={18} />
-          <div>
-            <strong>Ambiente de teste</strong>
-            <span>Dados e acessos para homologação.</span>
-          </div>
-        </div>
-
-        <button className="logout" onClick={logout}>Sair</button>
       </aside>
 
       <section className="workspace">
         <header className="topbar">
           <div>
-            <p className="eyebrow">{view === 'admin' ? 'Administração' : view === 'prestador' ? provider?.name : publicProviderId ? bookingService?.provider.name : 'Agendamento'}</p>
-            <h1>{view === 'admin' ? 'Visão geral da plataforma' : view === 'prestador' ? 'Agenda e operação' : publicEntryType === 'loja' ? 'Serviços disponíveis' : 'Agendar atendimento'}</h1>
+            <p className="eyebrow">{view === 'conta' ? 'Conta e segurança' : view === 'admin' ? 'Administração' : view === 'representante' ? 'Acesso delegado' : view === 'prestador' ? provider?.name : publicProviderId ? bookingService?.provider.name : 'Agendamento'}</p>
+            <h1 tabIndex="-1">{view === 'conta'
+              ? 'Minha conta'
+              : view === 'admin'
+                ? ({
+                    'visao-geral': 'Visão geral da plataforma',
+                    prestadores: 'Gestão de prestadores',
+                    convites: 'Convites de prestadores',
+                    configuracoes: 'Configurações da plataforma',
+                    privacidade: 'Privacidade e LGPD',
+                    representantes: 'Gestão de representantes',
+                  }[adminTab])
+                : view === 'representante'
+                  ? ({ 'visao-geral': 'Visão geral da carteira', carteira: 'Gestão de prestadores', convites: 'Convites de prestadores' }[representativeTab])
+                : view === 'prestador'
+                  ? ({
+                      agenda: 'Agenda e operação',
+                      servicos: 'Catálogo de serviços',
+                      clientes: 'Gestão de clientes',
+                      desempenho: 'Desempenho da loja',
+                      insights: 'Resumo operacional',
+                      loja: 'Minha loja',
+                    }[providerTab] || 'Agenda e operação')
+                  : publicEntryType === 'loja' ? 'Serviços disponíveis' : 'Agendar atendimento'}</h1>
           </div>
-          {session.role === 'admin' && <div className="summary">
+          {session.role === 'admin' && !session.isRepresentative && <div className="summary">
             <Stat icon={<Users />} label="Clientes" value={stats.clients} />
             <Stat icon={<Store />} label="Prestadores" value={stats.activeProviders} />
             <Stat icon={<CalendarCheck />} label="Agendamentos" value={stats.bookings} />
           </div>}
         </header>
 
+        {(view === 'prestador' || view === 'representante') && data.announcements.filter((item) => item.active).map((announcement) => (
+          <div className="unsavedBanner" key={announcement.id}>
+            <Mail size={16} />
+            <span><strong>{announcement.title}:</strong> {announcement.message}</span>
+          </div>
+        ))}
+
+        {view === 'conta' && authUser && <AccountSecurity
+          accountLoading={accountLoading}
+          accountNotice={accountNotice}
+          accountSessions={accountSessions}
+          authUser={authUser}
+          changeOwnPassword={changeOwnPassword}
+          closeOtherSessions={closeOtherSessions}
+          closeSelectedSessions={closeSelectedSessions}
+          deviceName={deviceName}
+          forcedPasswordChange={forcedPasswordChange}
+          formatDateTime={formatDateTime}
+          loadAccountSessions={loadAccountSessions}
+          passwordForm={passwordForm}
+          passwordRecovery={passwordRecovery}
+          session={session}
+          setPasswordForm={setPasswordForm}
+        />}
+
+        {view === 'representante' && (session.isMasterAdmin || session.isRepresentative) && <RepresentativePreview
+          bookings={data.bookings}
+          inviteForm={providerInviteForm}
+          inviteNotice={providerInviteNotice}
+          invites={representativePreviewInvites}
+          isMasterPreview={session.isMasterAdmin}
+          linkOwner={linkProviderOwner}
+          onApprove={approveProvider}
+          onCreateInvite={createProviderInvite}
+          onOpenProvider={(providerId) => {
+            setSelectedProvider(providerId)
+            setProviderTab('agenda')
+            setView('prestador')
+            setExpandedNavGroup('prestador')
+          }}
+          onSelectRepresentative={setRepresentativePreviewId}
+          onToggle={toggleProvider}
+          providerClients={data.providerClients}
+          providers={representativePreviewProviders}
+          representativeId={session.isRepresentative ? authUser?.id || '' : representativePreviewId}
+          representatives={representatives}
+          setInviteForm={setProviderInviteForm}
+          tab={representativeTab}
+        />}
+
         {view === 'cliente' && (
           <section className="grid two">
+            <ClientServiceHistory
+              entries={clientServiceHistory}
+              formatDate={formatDate}
+              onRebook={rebookService}
+              providerId={publicProviderId}
+            />
             {publicProviderId && bookingService && (
               <div
                 className={`inviteHero ${bookingService.provider.theme?.style || 'profissional'}`}
                 style={{
+                  '--accent': bookingService.provider.theme?.accent || data.brand.accent,
                   '--provider-accent': bookingService.provider.theme?.accent,
                   '--provider-bg': bookingService.provider.theme?.background,
                 }}
@@ -1866,6 +2993,8 @@ function App() {
                     <button
                       className="storeCta"
                       onClick={() => {
+                        trackAnalyticsEvent('visualizou_servico', bookingService)
+                        trackAnalyticsEvent('iniciou_agendamento', bookingService)
                         window.location.hash = `agendar=${bookingService.provider.slug || bookingService.provider.id}`
                         setPublicEntryType('agendar')
                       }}
@@ -1901,7 +3030,10 @@ function App() {
                         className="provider serviceCardPublic"
                         key={item.id}
                         onClick={() => {
-                          setBookingForm({ ...bookingForm, serviceId: item.id })
+                          trackAnalyticsEvent('visualizou_servico', item)
+                          trackAnalyticsEvent('iniciou_agendamento', item)
+                          setBookingForm({ ...bookingForm, serviceId: item.id, resourceId: '' })
+                          setSuccessMessage('')
                           window.location.hash = `agendar=${item.provider.slug || item.provider.id}`
                           setPublicEntryType('agendar')
                         }}
@@ -1909,10 +3041,11 @@ function App() {
                         {servicePhoto && <img src={servicePhoto.imageBase64} alt="" />}
                         <strong>{item.name}</strong>
                         <span>{item.description || item.provider.category}</span>
-                        <small>{formatServiceDuration(item)} • {formatServicePrice(item)}</small>
+                        <small>{formatServiceDuration(item)} • {formatServicePrice(item, item.provider.showPrices)}</small>
                       </button>
                     )
                   })}
+                  {filteredServices.length === 0 && <span className="emptyState">Nenhum serviço encontrado.</span>}
                 </div>
               </div>
             )}
@@ -1935,17 +3068,26 @@ function App() {
                   <button
                     className={bookingForm.serviceId === item.id ? 'provider selected' : 'provider'}
                     key={item.id}
-                    onClick={() => setBookingForm({ ...bookingForm, serviceId: item.id })}
+                    onClick={() => { trackAnalyticsEvent('visualizou_servico', item); trackAnalyticsEvent('iniciou_agendamento', item); setBookingForm({ ...bookingForm, serviceId: item.id, resourceId: '' }); setSuccessMessage('') }}
                   >
                     <strong>{item.name}</strong>
                     <span>{item.provider.name} • {item.provider.category} • {item.provider.city}</span>
-                        <small>{formatServiceDuration(item)} • {formatServicePrice(item)}</small>
+                        <small>{formatServiceDuration(item)} • {formatServicePrice(item, item.provider.showPrices)}</small>
+                    <label className="checkLabel cartCheck" onClick={(event) => event.stopPropagation()}>
+                      <input
+                        type="checkbox"
+                        checked={bookingForm.cartServiceIds.includes(item.id)}
+                        onChange={() => toggleCartService(item.id)}
+                      />
+                      Também tenho interesse
+                    </label>
                   </button>
                 ))}
+                {filteredServices.length === 0 && <span className="emptyState">Nenhum serviço encontrado.</span>}
               </div>
             </div>}
 
-            {publicEntryType === 'agendar' && <form className="panel form" onSubmit={createBooking}>
+            {publicEntryType === 'agendar' && <form className="panel form" data-booking-form onSubmit={createBooking} onFocusCapture={() => trackAnalyticsEvent('iniciou_agendamento', bookingService)}>
               <div className="panelHeader compact">
                 <div>
                   <p className="eyebrow">Novo agendamento</p>
@@ -1959,8 +3101,17 @@ function App() {
                   <span>Serviço selecionado</span>
                   <strong>{bookingService.provider.name} • {bookingService.name}</strong>
                   <small>
-                    {bookingService.provider.category} • {bookingService.provider.city} • {formatServiceDuration(bookingService)} • {formatServicePrice(bookingService)}
+                    {bookingService.provider.category} • {bookingService.provider.city} • {formatServiceDuration(bookingService)} • {formatServicePrice(bookingService, bookingService.provider.showPrices)}
                   </small>
+                </div>
+              )}
+
+              {cartServices.length > 0 && (
+                <div className="selectedService">
+                  <span>Também tem interesse em</span>
+                  {cartServices.map((item) => (
+                    <strong key={item.id}>{item.name}{item.provider.showPrices ? ` — ${formatServicePrice(item, true)}` : ''}</strong>
+                  ))}
                 </div>
               )}
 
@@ -1975,8 +3126,36 @@ function App() {
                 <input required value={bookingForm.client} onChange={(event) => setBookingForm({ ...bookingForm, client: event.target.value })} />
               </label>
               <label>E-mail ou WhatsApp
-                <input required value={bookingForm.contact} onChange={(event) => setBookingForm({ ...bookingForm, contact: event.target.value })} />
+                <input
+                  required
+                  value={bookingForm.contact}
+                  onChange={(event) => {
+                    const nextContact = event.target.value
+                    setBookingForm({
+                      ...bookingForm,
+                      contact: nextContact,
+                      consent: bookingForm.consent || hasExistingConsent(data, bookingService?.providerId, nextContact),
+                    })
+                  }}
+                />
               </label>
+              {publicResources.length > 0 && (
+                <div className="timePicker">
+                  <strong>Com quem</strong>
+                  <div>
+                    {publicResources.map((resource) => (
+                      <button
+                        className={bookingForm.resourceId === resource.id ? 'selected' : ''}
+                        key={resource.id}
+                        onClick={() => setBookingForm({ ...bookingForm, resourceId: resource.id, time: '' })}
+                        type="button"
+                      >
+                        {resource.name}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
               <div className="inlineFields">
                 <label>Data
                   <input required max={maxBookingDate} min={today} type="date" value={bookingForm.date} onChange={(event) => setBookingForm({ ...bookingForm, date: event.target.value })} />
@@ -2013,7 +3192,9 @@ function App() {
                     Autorizo o uso do meu nome e contato para gerenciar este atendimento, retornos e comunicações com este prestador.
                   </label>
                   <p className="privacyHint">
-                    Seus dados ficam vinculados somente ao prestador deste link. Você pode solicitar acesso ou exclusão pelo canal de privacidade.
+                    {hasExistingConsent(data, bookingService?.providerId, bookingForm.contact)
+                      ? 'Consentimento já registrado para esse contato com este prestador. Você pode revisar desmarcando a caixa acima.'
+                      : 'Seus dados ficam vinculados somente ao prestador deste link. Você pode solicitar acesso ou exclusão pelo canal de privacidade.'}
                   </p>
                 </>
               )}
@@ -2058,6 +3239,8 @@ function App() {
                 </select>
               </div>
 
+              {providerTab === 'loja' && (
+              <>
               <div className="metricGrid">
                 <Stat label="Hoje" value={todayBookings} icon={<CalendarDays />} />
                 <Stat label="Pendentes" value={pendingBookings} icon={<AlertCircle />} />
@@ -2123,134 +3306,206 @@ function App() {
                     <span>Você tem alterações não salvas nesta página. Clique em "Salvar alterações" para que o cliente veja essas mudanças.</span>
                   </div>
                 )}
-                <div>
-                  <p className="eyebrow">Identidade</p>
-                  <h3>Dados do negócio</h3>
-                </div>
-                <div className="inlineFields">
-                  <label>Nome do negócio
-                    <input
-                      value={inviteDraft.name}
-                      onChange={(event) => updateInviteDraft(provider.id, 'name', event.target.value)}
-                    />
-                  </label>
-                  <label>Categoria
-                    <input
-                      value={inviteDraft.category}
-                      onChange={(event) => updateInviteDraft(provider.id, 'category', event.target.value)}
-                    />
-                  </label>
+
+                <div className="profileTabs" role="tablist" aria-label="Seções do perfil do prestador">
+                  <button type="button" className={providerProfileTab === 'identidade' ? 'active' : ''} onClick={() => setProviderProfileTab('identidade')}>Identidade</button>
+                  <button type="button" className={providerProfileTab === 'vitrine' ? 'active' : ''} onClick={() => setProviderProfileTab('vitrine')}>Vitrine</button>
+                  <button type="button" className={providerProfileTab === 'convite' ? 'active' : ''} onClick={() => setProviderProfileTab('convite')}>Convite</button>
+                  <button type="button" className={providerProfileTab === 'recursos' ? 'active' : ''} onClick={() => setProviderProfileTab('recursos')}>Recursos</button>
                 </div>
 
-                <div>
-                  <p className="eyebrow">Vitrine</p>
-                  <h3>Sobre o negócio</h3>
-                </div>
-                <label>Conte sua história pro cliente
-                  <textarea
-                    className="aboutField"
-                    placeholder="Fale sobre sua experiência, sua proposta, o que torna seu atendimento diferente. Esse texto aparece na sua página pública, antes dos serviços."
-                    value={inviteDraft.about}
-                    onChange={(event) => updateInviteDraft(provider.id, 'about', event.target.value)}
-                  />
-                </label>
+                {providerProfileTab === 'identidade' && (
+                  <>
+                    <div>
+                      <p className="eyebrow">Identidade</p>
+                      <h3>Dados do negócio</h3>
+                    </div>
+                    <div className="inlineFields">
+                      <label>Nome do negócio
+                        <input
+                          value={inviteDraft.name}
+                          onChange={(event) => updateInviteDraft(provider.id, 'name', event.target.value)}
+                        />
+                      </label>
+                      <label>Categoria
+                        <input
+                          value={inviteDraft.category}
+                          onChange={(event) => updateInviteDraft(provider.id, 'category', event.target.value)}
+                        />
+                      </label>
+                    </div>
+                    <label className="checkLabel">
+                      <input
+                        type="checkbox"
+                        checked={inviteDraft.showPrices}
+                        onChange={(event) => updateInviteDraft(provider.id, 'showPrices', event.target.checked)}
+                      />
+                      Mostrar preços dos serviços na vitrine pública
+                    </label>
+                    {!inviteDraft.showPrices && (
+                      <p className="privacyHint">
+                        Com isso desativado, todo serviço aparece como "Sob consulta" pro cliente, mesmo os que têm preço fixo cadastrado — os preços continuam salvos, só não ficam visíveis publicamente.
+                      </p>
+                    )}
+                  </>
+                )}
 
-                <div className="highlightEditor">
-                  <div>
-                    <p className="eyebrow">Destaques</p>
-                    <h3>Chips da vitrine</h3>
-                  </div>
-                  <div className="chips">
-                    {(inviteDraft.highlights || []).map((highlight) => (
-                      <button
-                        key={highlight}
-                        type="button"
-                        onClick={() => updateInviteDraft(provider.id, 'highlights', inviteDraft.highlights.filter((item) => item !== highlight))}
+                {providerProfileTab === 'vitrine' && (
+                  <>
+                    <div>
+                      <p className="eyebrow">Vitrine</p>
+                      <h3>Sobre o negócio</h3>
+                    </div>
+                    <label>Conte sua história pro cliente
+                      <textarea
+                        className="aboutField"
+                        placeholder="Fale sobre sua experiência, sua proposta, o que torna seu atendimento diferente. Esse texto aparece na sua página pública, antes dos serviços."
+                        value={inviteDraft.about}
+                        onChange={(event) => updateInviteDraft(provider.id, 'about', event.target.value)}
+                      />
+                    </label>
+
+                    <div className="highlightEditor">
+                      <div>
+                        <p className="eyebrow">Destaques</p>
+                        <h3>Chips da vitrine</h3>
+                      </div>
+                      <div className="chips">
+                        {(inviteDraft.highlights || []).map((highlight) => (
+                          <button
+                            key={highlight}
+                            type="button"
+                            onClick={() => updateInviteDraft(provider.id, 'highlights', inviteDraft.highlights.filter((item) => item !== highlight))}
+                          >
+                            {highlight} <Trash2 size={14} />
+                          </button>
+                        ))}
+                      </div>
+                      <form
+                        className="inlineAdd"
+                        onSubmit={(event) => {
+                          event.preventDefault()
+                          const value = event.currentTarget.elements.highlight.value.trim()
+                          if (!value) return
+                          updateInviteDraft(provider.id, 'highlights', [...(inviteDraft.highlights || []), value])
+                          event.currentTarget.reset()
+                        }}
                       >
-                        {highlight} <Trash2 size={14} />
-                      </button>
-                    ))}
-                  </div>
-                  <form
-                    className="inlineAdd"
-                    onSubmit={(event) => {
-                      event.preventDefault()
-                      const value = event.currentTarget.elements.highlight.value.trim()
-                      if (!value) return
-                      updateInviteDraft(provider.id, 'highlights', [...(inviteDraft.highlights || []), value])
-                      event.currentTarget.reset()
-                    }}
-                  >
-                    <input name="highlight" maxLength="36" placeholder="Ex.: Atende em domicilio" />
-                    <button type="submit">Adicionar</button>
-                  </form>
-                </div>
+                        <input name="highlight" maxLength="36" placeholder="Ex.: Atende em domicilio" />
+                        <button type="submit">Adicionar</button>
+                      </form>
+                    </div>
+                  </>
+                )}
 
-                <div>
-                  <p className="eyebrow">Página do convite</p>
-                  <h3>Mensagem para o cliente</h3>
-                </div>
-                <div className="logoUploader">
-                  <div className="logoPreview">
-                    {inviteDraft.logoUrl ? <img src={inviteDraft.logoUrl} alt="" /> : <Store size={26} />}
-                  </div>
-                  <label>Logo ou imagem da loja
-                    <input
-                      accept="image/*"
-                      type="file"
-                      onChange={(event) => uploadProviderLogo(provider.id, event.target.files?.[0])}
-                    />
-                  </label>
-                  {inviteDraft.logoUrl && (
-                    <button type="button" onClick={() => updateInviteDraft(provider.id, 'logoUrl', '')}>
-                      Remover imagem
+                {providerProfileTab === 'convite' && (
+                  <>
+                    <div>
+                      <p className="eyebrow">Página do convite</p>
+                      <h3>Mensagem para o cliente</h3>
+                    </div>
+                    <div className="logoUploader">
+                      <div className="logoPreview">
+                        {inviteDraft.logoUrl ? <img src={inviteDraft.logoUrl} alt="" /> : <Store size={26} />}
+                      </div>
+                      <label>Logo ou imagem da loja
+                        <input
+                          accept="image/*"
+                          type="file"
+                          onChange={(event) => uploadProviderLogo(provider.id, event.target.files?.[0])}
+                        />
+                      </label>
+                      {inviteDraft.logoUrl && (
+                        <button type="button" onClick={() => updateInviteDraft(provider.id, 'logoUrl', '')}>
+                          Remover imagem
+                        </button>
+                      )}
+                    </div>
+                    <label>Título do convite
+                      <input
+                        value={inviteDraft.inviteTitle}
+                        onChange={(event) => updateInviteDraft(provider.id, 'inviteTitle', event.target.value)}
+                      />
+                    </label>
+                    <label>Mensagem de boas-vindas
+                      <textarea
+                        value={inviteDraft.inviteMessage}
+                        onChange={(event) => updateInviteDraft(provider.id, 'inviteMessage', event.target.value)}
+                      />
+                    </label>
+                    <label>Proposta do primeiro agendamento
+                      <input
+                        value={inviteDraft.firstOffer}
+                        onChange={(event) => updateInviteDraft(provider.id, 'firstOffer', event.target.value)}
+                      />
+                    </label>
+                    <div className="themeEditor">
+                      <label>Cor principal
+                        <input
+                          type="color"
+                          value={inviteDraft.theme?.accent || data.brand.accent}
+                          onChange={(event) => updateThemeDraft(provider.id, 'accent', event.target.value)}
+                        />
+                      </label>
+                      <label>Cor de fundo
+                        <input
+                          type="color"
+                          value={inviteDraft.theme?.background || '#111827'}
+                          onChange={(event) => updateThemeDraft(provider.id, 'background', event.target.value)}
+                        />
+                      </label>
+                      <label>Estilo
+                        <select
+                          value={inviteDraft.theme?.style || 'profissional'}
+                          onChange={(event) => updateThemeDraft(provider.id, 'style', event.target.value)}
+                        >
+                          <option value="profissional">Profissional</option>
+                          <option value="acolhedor">Acolhedor</option>
+                          <option value="premium">Premium</option>
+                        </select>
+                      </label>
+                    </div>
+                  </>
+                )}
+
+                {providerProfileTab === 'recursos' && (
+                  <>
+                    <div>
+                      <p className="eyebrow">Recursos</p>
+                      <h3>Profissionais/salas da loja</h3>
+                    </div>
+                    <p className="privacyHint">
+                      Opcional: se a loja é atendida só por você, não precisa cadastrar nada aqui — a agenda continua sendo 1 só, como sempre foi.
+                      Cadastre um recurso pra cada profissional/sala/cadeira que atende de forma independente; o cliente escolherá um deles ao agendar,
+                      e a disponibilidade passa a ser calculada por recurso.
+                    </p>
+
+                    <div className="serviceList">
+                      {providerResources.map((resource) => (
+                        <article className="serviceEditor" key={resource.id}>
+                          <div className="serviceEditorTop">
+                            <label>Nome
+                              <input value={resource.name} onChange={(event) => updateProviderResource(resource.id, 'name', event.target.value)} />
+                            </label>
+                          </div>
+                          <label>Bio curta
+                            <textarea value={resource.bio} onChange={(event) => updateProviderResource(resource.id, 'bio', event.target.value)} />
+                          </label>
+                          <div className="serviceActions">
+                            <button type="button" onClick={() => updateProviderResource(resource.id, 'active', !resource.active)}>{resource.active ? 'Pausar' : 'Ativar'}</button>
+                            <button className="dangerButton" type="button" onClick={() => removeProviderResource(resource.id)}><Trash2 size={16} /> Remover</button>
+                          </div>
+                        </article>
+                      ))}
+                      {providerResources.length === 0 && <span className="emptyState">Nenhum recurso cadastrado — a loja funciona com 1 agenda só.</span>}
+                    </div>
+
+                    <button className="secondaryButton compactButton" type="button" onClick={createProviderResource}>
+                      <Plus size={16} /> Adicionar recurso
                     </button>
-                  )}
-                </div>
-                <label>Título do convite
-                  <input
-                    value={inviteDraft.inviteTitle}
-                    onChange={(event) => updateInviteDraft(provider.id, 'inviteTitle', event.target.value)}
-                  />
-                </label>
-                <label>Mensagem de boas-vindas
-                  <textarea
-                    value={inviteDraft.inviteMessage}
-                    onChange={(event) => updateInviteDraft(provider.id, 'inviteMessage', event.target.value)}
-                  />
-                </label>
-                <label>Proposta do primeiro agendamento
-                  <input
-                    value={inviteDraft.firstOffer}
-                    onChange={(event) => updateInviteDraft(provider.id, 'firstOffer', event.target.value)}
-                  />
-                </label>
-                <div className="themeEditor">
-                  <label>Cor principal
-                    <input
-                      type="color"
-                      value={inviteDraft.theme?.accent || data.brand.accent}
-                      onChange={(event) => updateThemeDraft(provider.id, 'accent', event.target.value)}
-                    />
-                  </label>
-                  <label>Cor de fundo
-                    <input
-                      type="color"
-                      value={inviteDraft.theme?.background || '#111827'}
-                      onChange={(event) => updateThemeDraft(provider.id, 'background', event.target.value)}
-                    />
-                  </label>
-                  <label>Estilo
-                    <select
-                      value={inviteDraft.theme?.style || 'profissional'}
-                      onChange={(event) => updateThemeDraft(provider.id, 'style', event.target.value)}
-                    >
-                      <option value="profissional">Profissional</option>
-                      <option value="acolhedor">Acolhedor</option>
-                      <option value="premium">Premium</option>
-                    </select>
-                  </label>
-                </div>
+                  </>
+                )}
+
                 <div className="saveRow">
                   <button type="button" onClick={() => saveInviteDraft(provider.id)}>Salvar alterações</button>
                   {hasUnsavedChanges ? (
@@ -2260,21 +3515,8 @@ function App() {
                   )}
                 </div>
               </div>
-
-              <div className="tabs">
-                <button className={providerTab === 'agenda' ? 'active' : ''} onClick={() => setProviderTab('agenda')}>
-                  <CalendarCheck size={17} /> Agenda
-                </button>
-                <button className={providerTab === 'servicos' ? 'active' : ''} onClick={() => setProviderTab('servicos')}>
-                  <Store size={17} /> Servicos
-                </button>
-                <button className={providerTab === 'clientes' ? 'active' : ''} onClick={() => setProviderTab('clientes')}>
-                  <Users size={17} /> Clientes
-                </button>
-                <button className={providerTab === 'insights' ? 'active' : ''} onClick={() => setProviderTab('insights')}>
-                  <TrendingUp size={17} /> Insights
-                </button>
-              </div>
+              </>
+              )}
 
               {providerTab === 'agenda' && (
                 <div className="providerSection">
@@ -2285,13 +3527,24 @@ function App() {
                     </div>
                     <div className="agendaTools">
                       <input type="date" value={agendaDate} onChange={(event) => setAgendaDate(event.target.value)} />
+                      {providerResources.length > 0 && (
+                        <label className="compactSelect">
+                          <Users size={16} />
+                          <select value={agendaResource} onChange={(event) => setAgendaResource(event.target.value)}>
+                            <option value="todos">Todos os recursos</option>
+                            {providerResources.map((resource) => (
+                              <option key={resource.id} value={resource.id}>{resource.name}</option>
+                            ))}
+                          </select>
+                        </label>
+                      )}
                       <label className="compactSelect">
                         <Filter size={16} />
                         <select value={agendaFilter} onChange={(event) => setAgendaFilter(event.target.value)}>
                           <option value="todos">Todos</option>
                           <option value="pendente">Pendentes</option>
                           <option value="confirmado">Confirmados</option>
-                  <Stat label="Concluidos" value={completedBookings} icon={<CheckCircle2 />} />
+                          <option value="concluido">Concluídos</option>
                           <option value="cancelado">Cancelados</option>
                         </select>
                       </label>
@@ -2332,17 +3585,34 @@ function App() {
                       <article className="appointment" key={booking.id}>
                         <div>
                           <strong>{booking.client}</strong>
-                          <span>{formatDate(booking.date)} às {booking.time} • {bookingServiceName(booking)} • {booking.contact}</span>
+                          <span>
+                            {formatDate(booking.date)} às {booking.time} • {bookingServiceName(booking)}
+                            {booking.resourceId && ` • ${providerResources.find((resource) => resource.id === booking.resourceId)?.name || 'Recurso removido'}`}
+                            {' • '}{booking.contact}
+                          </span>
                           <small>{booking.notes || 'Sem observações'}</small>
+                          {booking.extraServices && <small>Também tem interesse em: {booking.extraServices}</small>}
                         </div>
-                        <select value={booking.status} onChange={(event) => updateBookingStatus(booking.id, event.target.value)}>
-                          <option value="pendente">Pendente</option>
-                          <option value="confirmado">Confirmado</option>
-                          <option value="concluido">Concluído</option>
-                          <option value="cancelado">Cancelado</option>
-                        </select>
+                        <div className="statusPills" role="group" aria-label="Status do agendamento">
+                          {[
+                            { value: 'pendente', label: 'Pendente' },
+                            { value: 'confirmado', label: 'Confirmado' },
+                            { value: 'concluido', label: 'Concluído' },
+                            { value: 'cancelado', label: 'Cancelado' },
+                          ].map((option) => (
+                            <button
+                              key={option.value}
+                              type="button"
+                              className={`statusPill ${option.value}${booking.status === option.value ? ' active' : ''}`}
+                              onClick={() => updateBookingStatus(booking.id, option.value)}
+                            >
+                              {option.label}
+                            </button>
+                          ))}
+                        </div>
                       </article>
                     ))}
+                    {filteredProviderBookings.length === 0 && <span className="emptyState">Nenhum agendamento encontrado para esse filtro.</span>}
                   </div>
                 </div>
               )}
@@ -2368,7 +3638,7 @@ function App() {
                             <label>Nome
                               <input value={service.name} onChange={(event) => updateProviderService(service.id, 'name', event.target.value)} />
                             </label>
-                            <label>Preco
+                            <label>Preço
                               <input type="number" min="0" value={service.price} onChange={(event) => updateProviderService(service.id, 'price', Number(event.target.value))} />
                             </label>
                             <label>Modo
@@ -2378,11 +3648,11 @@ function App() {
                                 <option value="sob_consulta">Sob consulta</option>
                               </select>
                             </label>
-                            <label>Duracao
-                              <input type="number" min="0" placeholder="Variavel" value={service.duration || ''} onChange={(event) => updateProviderService(service.id, 'duration', event.target.value ? Number(event.target.value) : null)} />
+                            <label>Duração
+                              <input type="number" min="0" placeholder="Variável" value={service.duration || ''} onChange={(event) => updateProviderService(service.id, 'duration', event.target.value ? Number(event.target.value) : null)} />
                             </label>
                           </div>
-                          <label>Descricao
+                          <label>Descrição
                             <textarea value={service.description} onChange={(event) => updateProviderService(service.id, 'description', event.target.value)} />
                           </label>
                           <div className="serviceActions">
@@ -2468,30 +3738,39 @@ function App() {
                         </div>
                         <button
                           className="contactAction"
-                          onClick={() => window.open(`https://wa.me/?text=${encodeURIComponent(`Olá, ${client.name}! Vamos agendar seu próximo atendimento? ${getInviteLink(provider)}`)}`, '_blank', 'noopener,noreferrer')}
+                          onClick={() => window.open(buildWhatsAppLink(client, provider), '_blank', 'noopener,noreferrer')}
                         >
                           <MessageCircle size={16} /> Recontatar
                         </button>
                       </article>
                     ))}
+                    {filteredManagedClients.length === 0 && <span className="emptyState">Nenhum cliente encontrado para esse filtro.</span>}
                   </div>
                 </div>
               )}
 
               {providerTab === 'insights' && (
-                <div className="insightGrid">
-                  <Stat label="Receita estimada" value={currency(providerRevenue)} icon={<Store />} />
-                  <Stat label="Sob consulta" value={providerConsultationBookings} icon={<AlertCircle />} />
-                  <Stat label="Concluidos" value={completedBookings} icon={<CheckCircle2 />} />
-                  <Stat label="Sem retorno" value={clientsWithoutReturn} icon={<Clock3 />} />
-                  <div className="insightPanel">
-                    <h3>Proximos atendimentos</h3>
-                    {nextBookings.map((booking) => (
-                      <span key={booking.id}>{formatDate(booking.date)} as {booking.time} • {bookingServiceName(booking)} • {booking.client}</span>
-                    ))}
-                    {nextBookings.length === 0 && <span>Nenhum atendimento futuro encontrado.</span>}
-                  </div>
-                </div>
+                <OperationalSummary
+                  clientsWithoutReturn={clientsWithoutReturn}
+                  completedBookings={completedBookings}
+                  currency={currency}
+                  providerConsultationBookings={providerConsultationBookings}
+                  providerRevenue={providerRevenue}
+                />
+              )}
+
+              {providerTab === 'desempenho' && (
+                <StorePerformance
+                  analyticsDays={analyticsDays}
+                  bookingStarts={bookingStarts}
+                  funnelConversion={funnelConversion}
+                  generatedBookings={generatedBookings}
+                  providerServiceAnalytics={providerServiceAnalytics}
+                  serviceViews={serviceViews}
+                  setAnalyticsDays={setAnalyticsDays}
+                  startConversion={startConversion}
+                  uniqueVisitors={uniqueVisitors}
+                />
               )}
             </div>
           </section>
@@ -2499,14 +3778,6 @@ function App() {
 
         {view === 'admin' && (
           <section className="adminWorkspace">
-            <nav className="adminTabs" aria-label="Seções da administração">
-              <button className={adminTab === 'visao-geral' ? 'active' : ''} onClick={() => setAdminTab('visao-geral')}><LayoutDashboard size={18} /> Visão geral</button>
-              <button className={adminTab === 'prestadores' ? 'active' : ''} onClick={() => setAdminTab('prestadores')}><Store size={18} /> Prestadores</button>
-              <button className={adminTab === 'convites' ? 'active' : ''} onClick={() => setAdminTab('convites')}><Mail size={18} /> Convites</button>
-              <button className={adminTab === 'configuracoes' ? 'active' : ''} onClick={() => setAdminTab('configuracoes')}><Settings size={18} /> Configurações</button>
-              <button className={adminTab === 'privacidade' ? 'active' : ''} onClick={() => setAdminTab('privacidade')}><ShieldCheck size={18} /> Privacidade</button>
-            </nav>
-
             {adminTab === 'visao-geral' && <div className="adminOverview">
               <div className="metricGrid adminMetrics">
                 <Stat label="Prestadores" value={stats.providers} icon={<Store />} />
@@ -2551,54 +3822,94 @@ function App() {
                 {adminTab === 'prestadores' ? <Store size={22} /> : <Mail size={22} />}
               </div>
 
+              <div className="profileTabs" role="tablist" aria-label="Seções de prestadores">
+                <button type="button" className={adminTab === 'prestadores' ? 'active' : ''} onClick={() => setAdminTab('prestadores')}>Cadastrados</button>
+                <button type="button" className={adminTab === 'convites' ? 'active' : ''} onClick={() => setAdminTab('convites')}>Convites</button>
+              </div>
+
               {adminTab === 'prestadores' && <div className="metricGrid">
                 <Stat label="Total" value={stats.providers} icon={<Store />} />
                 <Stat label="Ativos" value={stats.activeProviders} icon={<CheckCircle2 />} />
                 <Stat label="LGPD abertas" value={openPrivacyRequests} icon={<Shield />} />
               </div>}
 
-              {adminTab === 'convites' && <form className="shareBox" onSubmit={createProviderInvite}>
-                <div>
-                  <strong>Convite de prestador</strong>
-                  <input
-                    type="email"
-                    placeholder="email@prestador.com.br"
-                    value={providerInviteForm.email}
-                    onChange={(event) => setProviderInviteForm({ email: event.target.value })}
-                    required
-                  />
-                  {providerInviteNotice && <span>{providerInviteNotice}</span>}
-                </div>
-                <div className="shareActions">
-                  <button type="submit">Gerar link</button>
-                  {providerInviteNotice && providerInviteNotice.startsWith('http') && (
-                    <button type="button" className="secondaryAction" onClick={() => navigator.clipboard.writeText(providerInviteNotice)}>
-                      Copiar
-                    </button>
-                  )}
-                </div>
-              </form>}
+              {adminTab === 'convites' && (
+                <>
+                  <form className="shareBox" onSubmit={createProviderInvite}>
+                    <div>
+                      <strong>Convidar prestador</strong>
+                      <input
+                        type="email"
+                        placeholder="email@prestador.com.br"
+                        value={providerInviteForm.email}
+                        onChange={(event) => setProviderInviteForm({ email: event.target.value })}
+                        required
+                      />
+                      {providerInviteNotice && <span>{providerInviteNotice}</span>}
+                    </div>
+                    <div className="shareActions">
+                      <button type="submit">Gerar link</button>
+                      {providerInviteNotice && providerInviteNotice.startsWith('http') && (
+                        <button type="button" className="secondaryAction" onClick={() => navigator.clipboard.writeText(providerInviteNotice)}>
+                          Copiar
+                        </button>
+                      )}
+                    </div>
+                  </form>
+                  <p className="privacyHint">
+                    Gera um link único pra essa pessoa se cadastrar como prestador. Não envia e-mail sozinho — copie e mande você mesmo (WhatsApp, e-mail, etc.).
+                  </p>
+                  <div className="requestList">
+                    {data.providerInvites.filter((invite) => invite.status === 'ativo').map((invite) => (
+                      <article className="requestRow" key={invite.id}>
+                        <div><strong>{invite.invitedEmail}</strong><span>Convite de prestador aguardando aceite</span></div>
+                        <div className="shareActions">
+                          <small>Ativo</small>
+                          <button type="button" className="secondaryAction" onClick={() => navigator.clipboard.writeText(getProviderInviteLink(invite))}>Copiar link</button>
+                        </div>
+                      </article>
+                    ))}
+                    {data.providerInvites.filter((invite) => invite.status === 'ativo').length === 0 && (
+                      <span className="emptyState">Nenhum convite de prestador pendente.</span>
+                    )}
+                  </div>
+                </>
+              )}
 
               {adminTab === 'prestadores' && <div className="providerRows">
                 {data.providers.map((item) => (
-                  <article className="providerRow" key={item.id}>
-                    <div>
-                      <strong>{item.name}</strong>
-                      <span>{item.owner} • {item.category} • {item.city} • {item.approvalStatus}</span>
-                    </div>
-                    {item.approvalStatus === 'analise' ? (
-                      <button className="toggle review" onClick={() => approveProvider(item.id)}>Aprovar</button>
-                    ) : (
-                      <button className={item.active ? 'toggle on' : 'toggle'} onClick={() => toggleProvider(item.id)}>
-                        {item.active ? 'Ativo' : 'Pausado'}
-                      </button>
-                    )}
-                  </article>
+                  <ProviderManagementRow
+                    key={item.id}
+                    isMasterAdmin={session.isMasterAdmin}
+                    linkOwner={linkProviderOwner}
+                    onApprove={approveProvider}
+                    onOpen={(providerId) => {
+                      setSelectedProvider(providerId)
+                      setProviderTab('agenda')
+                      setView('prestador')
+                      setExpandedNavGroup('prestador')
+                      window.scrollTo({ top: 0, behavior: 'smooth' })
+                      window.setTimeout(() => document.querySelector('.topbar h1')?.focus(), 0)
+                    }}
+                    onProvisionOwner={provisionProviderOwner}
+                    onToggle={toggleProvider}
+                    onTransfer={transferProvider}
+                    provider={item}
+                    representatives={representatives}
+                  />
                 ))}
+                {data.providers.length === 0 && <span className="emptyState">Nenhum prestador cadastrado.</span>}
               </div>}
             </div>}
 
-            {adminTab === 'configuracoes' && <div className="adminSettingsGrid">
+            {adminTab === 'configuracoes' && <div className="adminSettingsGrid singleColumn">
+            <div className="profileTabs" role="tablist" aria-label="Seções de configurações">
+              <button type="button" className={configSubTab === 'marca' ? 'active' : ''} onClick={() => setConfigSubTab('marca')}>Marca</button>
+              <button type="button" className={configSubTab === 'regras' ? 'active' : ''} onClick={() => setConfigSubTab('regras')}>Regras</button>
+              {session.isMasterAdmin && <button type="button" className={configSubTab === 'comunicados' ? 'active' : ''} onClick={() => setConfigSubTab('comunicados')}>Comunicados</button>}
+            </div>
+
+            {configSubTab === 'marca' && (
             <div className="panel form">
               <div className="panelHeader compact">
                 <div>
@@ -2611,6 +3922,46 @@ function App() {
               <label>Nome da plataforma
                 <input value={data.brand.name} onChange={(event) => updateBrand('name', event.target.value)} />
               </label>
+              <div className="logoUploader">
+                <div className="logoPreview">
+                  {data.brand.logoUrl ? <img src={data.brand.logoUrl} alt="" /> : <CalendarCheck size={26} />}
+                </div>
+                <label>Logo (ícone)
+                  <input accept="image/*" type="file" onChange={(event) => uploadBrandLogo(event.target.files?.[0])} />
+                </label>
+                {data.brand.logoUrl && (
+                  <button type="button" onClick={() => updateBrand('logoUrl', '')}>
+                    Remover imagem
+                  </button>
+                )}
+              </div>
+              <p className="privacyHint">Ícone compacto — usado no distintivo do sidebar/login e no favicon da aba do navegador.</p>
+              <div className="logoUploader">
+                <div className="logoPreview">
+                  {data.brand.logotypeUrl ? <img src={data.brand.logotypeUrl} alt="" /> : <CalendarCheck size={26} />}
+                </div>
+                <label>Logotipo (marca completa)
+                  <input accept="image/*" type="file" onChange={(event) => uploadBrandLogotype(event.target.files?.[0])} />
+                </label>
+                {data.brand.logotypeUrl && (
+                  <button type="button" onClick={() => updateBrand('logotypeUrl', '')}>
+                    Remover imagem
+                  </button>
+                )}
+              </div>
+              <p className="privacyHint">Marca completa — usada em espaços maiores, como a tela de login.</p>
+              <label>Tamanho da logomarca no menu
+                <div className="brandSizeInput">
+                  <input
+                    type="number"
+                    min="1"
+                    step="1"
+                    value={data.brand.logotypeSize || 64}
+                    onChange={(event) => updateBrand('logotypeSize', Number(event.target.value))}
+                  />
+                  <span>px</span>
+                </div>
+              </label>
               <label>Cor principal
                 <input type="color" value={data.brand.accent} onChange={(event) => updateBrand('accent', event.target.value)} />
               </label>
@@ -2621,7 +3972,9 @@ function App() {
                 Novos prestadores solicitam cadastro pela tela inicial. O admin revisa e aprova antes de liberar agenda e link público.
               </p>
             </div>
+            )}
 
+            {configSubTab === 'regras' && (
             <div className="panel settingsPanel">
               <div className="panelHeader compact">
                 <div>
@@ -2678,7 +4031,181 @@ function App() {
                   Permitir compartilhamento via WhatsApp/nativo
                 </label>
               </div>
+              {session.isMasterAdmin && <div className="emailDeliverySettings">
+                <div className="panelHeader compact">
+                  <div><p className="eyebrow">E-mail transacional</p><h3>Envio de convite de representante</h3></div>
+                  <Mail size={20} />
+                </div>
+                <p className="privacyHint">
+                  Vale só pro convite de representante (aba Rede de representantes). Convite de prestador e de cliente não enviam e-mail — geram link pra você copiar e mandar manualmente.
+                </p>
+                <div className="settingsGrid">
+                  <label>Nome do remetente
+                    <input value={data.settings.inviteSenderName} onChange={(event) => updateSetting('inviteSenderName', event.target.value)} />
+                  </label>
+                  <label>E-mail remetente
+                    <input type="email" placeholder="convites@seudominio.com" value={data.settings.inviteSenderEmail} onChange={(event) => updateSetting('inviteSenderEmail', event.target.value)} />
+                  </label>
+                  <label>E-mail para respostas
+                    <input type="email" placeholder="contato@seudominio.com" value={data.settings.inviteReplyToEmail} onChange={(event) => updateSetting('inviteReplyToEmail', event.target.value)} />
+                  </label>
+                </div>
+                <div className="emailDeliveryFooter">
+                  <label className="checkLabel"><input type="checkbox" checked={data.settings.inviteEmailEnabled} onChange={(event) => updateSetting('inviteEmailEnabled', event.target.checked)} /> Envio automático</label>
+                  <span className={`emailConnectionStatus${inviteEmailConnection.configured ? ' connected' : ''}`}>
+                    {inviteEmailConnection.checked ? inviteEmailConnection.configured ? 'Conectado' : 'Não conectado' : 'Não verificado'}
+                  </span>
+                  <button type="button" className="secondaryAction" onClick={checkInviteEmailConnection}>Verificar conexão</button>
+                </div>
+              </div>}
             </div>
+            )}
+
+            {configSubTab === 'comunicados' && session.isMasterAdmin && <div className="panel form">
+              <div className="panelHeader compact">
+                <div>
+                  <p className="eyebrow">Comunicação</p>
+                  <h2>Comunicados</h2>
+                </div>
+                <Mail size={22} />
+              </div>
+              <p className="privacyHint">
+                Aparece como aviso no painel de todos os prestadores (e representantes) quando eles acessam a conta. Não é visível pro cliente público.
+              </p>
+              <form
+                className="nestedForm"
+                onSubmit={(event) => {
+                  event.preventDefault()
+                  createAnnouncement(announcementForm.title, announcementForm.message)
+                  setAnnouncementForm({ title: '', message: '' })
+                }}
+              >
+                <label>Título
+                  <input required value={announcementForm.title} onChange={(event) => setAnnouncementForm({ ...announcementForm, title: event.target.value })} />
+                </label>
+                <label>Mensagem
+                  <textarea required value={announcementForm.message} onChange={(event) => setAnnouncementForm({ ...announcementForm, message: event.target.value })} />
+                </label>
+                <button type="submit">Publicar comunicado</button>
+              </form>
+              <div className="requestList">
+                {data.announcements.map((announcement) => (
+                  <article className="requestRow" key={announcement.id}>
+                    <div>
+                      <strong>{announcement.title}</strong>
+                      <span>{announcement.message}</span>
+                    </div>
+                    <div className="shareActions">
+                      <button type="button" className={announcement.active ? 'toggle on' : 'toggle'} onClick={() => toggleAnnouncement(announcement.id)}>
+                        {announcement.active ? 'Ativo' : 'Pausado'}
+                      </button>
+                      <button type="button" className="dangerButton" onClick={() => removeAnnouncement(announcement.id)}><Trash2 size={16} /></button>
+                    </div>
+                  </article>
+                ))}
+                {data.announcements.length === 0 && <span className="emptyState">Nenhum comunicado publicado.</span>}
+              </div>
+            </div>}
+            </div>}
+
+            {(adminTab === 'representantes' || adminTab === 'visao-projeto') && session.isMasterAdmin && (
+              <div className="profileTabs" role="tablist" aria-label="Seções de rede de representantes">
+                <button type="button" className={adminTab === 'representantes' ? 'active' : ''} onClick={() => setAdminTab('representantes')}>Contas</button>
+                <button type="button" className={adminTab === 'visao-projeto' ? 'active' : ''} onClick={() => setAdminTab('visao-projeto')}>Atribuições</button>
+              </div>
+            )}
+
+            {adminTab === 'representantes' && session.isMasterAdmin && <div className="panel adminSectionPanel">
+              <div className="panelHeader compact">
+                <div><p className="eyebrow">Acesso delegado</p><h2>Representantes</h2></div>
+                <Users size={22} />
+              </div>
+              <form className="shareBox" onSubmit={createRepresentativeInvite}>
+                <div>
+                  <strong>Convidar representante</strong>
+                  <input type="email" required placeholder="E-mail do representante" value={representativeEmail} onChange={(event) => setRepresentativeEmail(event.target.value)} />
+                  {representativeNotice && <span>{representativeNotice}</span>}
+                  {representativeDeliveryNotice && <span>{representativeDeliveryNotice}</span>}
+                </div>
+                <div className="shareActions">
+                  <button type="submit">Gerar e enviar</button>
+                  {representativeInviteLink && <button type="button" className="secondaryAction" onClick={() => navigator.clipboard.writeText(representativeInviteLink)}>Copiar link</button>}
+                </div>
+              </form>
+              {passwordProvisionNotice && <div className="requestRow" role="status">
+                <div><strong>{passwordProvisionNotice.email}</strong><span>Senha temporária: <code>{passwordProvisionNotice.tempPassword}</code> — repasse ao usuário; ele deverá trocá-la no primeiro acesso.</span></div>
+                <div className="shareActions">
+                  <button type="button" className="secondaryAction" onClick={() => navigator.clipboard.writeText(passwordProvisionNotice.tempPassword)}>Copiar senha</button>
+                  <button type="button" className="secondaryAction" onClick={() => setPasswordProvisionNotice(null)}>Fechar</button>
+                </div>
+              </div>}
+              <div className="providerRows">
+                {representatives.map((representative) => <article className="providerRow" key={representative.user_id}>
+                  <div><strong>{representative.email}</strong><span>Representante • {representative.status}</span></div>
+                  <div className="shareActions">
+                    <button type="button" className="secondaryAction" onClick={() => resetRepresentativePassword(representative)}>Definir senha</button>
+                    <button type="button" className={representative.status === 'ativo' ? 'toggle on' : 'toggle'} onClick={() => changeRepresentativeStatus(representative)}>
+                      {representative.status === 'ativo' ? 'Ativo' : 'Suspenso'}
+                    </button>
+                  </div>
+                </article>)}
+                {representatives.length === 0 && <span className="emptyState">Nenhum representante aceitou um convite.</span>}
+              </div>
+              {representativeInvites.some((invite) => invite.status === 'ativo') && <div className="requestList">
+                {representativeInvites.filter((invite) => invite.status === 'ativo').map((invite) => <article className="requestRow" key={invite.id}>
+                  <div><strong>{invite.invited_email}</strong><span>Convite aguardando aceite</span></div>
+                  <div className="shareActions">
+                    <small>Ativo</small>
+                    <button type="button" className="secondaryAction" onClick={() => copyRepresentativeInviteLink(invite)}>Copiar link</button>
+                    <button type="button" className="secondaryAction" onClick={() => provisionRepresentativeInvite(invite)}>Criar acesso direto</button>
+                  </div>
+                </article>)}
+              </div>}
+            </div>}
+
+            {adminTab === 'visao-projeto' && session.isMasterAdmin && <div className="panel adminSectionPanel">
+              <div className="panelHeader compact">
+                <div><p className="eyebrow">Panorama</p><h2>Visão do projeto</h2></div>
+                <LayoutDashboard size={22} />
+              </div>
+              <p className="privacyHint">
+                Quem gerencia cada loja na plataforma, agrupado por representante. A aparência/portfólio de cada loja continua sendo configurada
+                pelo próprio prestador em "Minha loja". Pra trocar o responsável por uma loja, use o campo "Responsável" na aba Prestadores.
+              </p>
+              <div className="metricGrid">
+                <Stat label="Prestadores" value={data.providers.length} icon={<Store />} />
+                <Stat label="Representantes ativos" value={representatives.filter((representative) => representative.status === 'ativo').length} icon={<Users />} />
+                <Stat label="Sem representante" value={data.providers.filter((item) => !item.representativeUserId).length} icon={<AlertCircle />} />
+              </div>
+
+              {representatives.map((representative) => {
+                const managedProviders = data.providers.filter((item) => item.representativeUserId === representative.user_id)
+                return (
+                  <div key={representative.user_id}>
+                    <h3>{representative.email} <small>({managedProviders.length} loja{managedProviders.length === 1 ? '' : 's'})</small></h3>
+                    <div className="providerRows">
+                      {managedProviders.map((item) => (
+                        <article className="providerRow" key={item.id}>
+                          <div><strong>{item.name}</strong><span>{item.category} • {item.city}</span></div>
+                        </article>
+                      ))}
+                      {managedProviders.length === 0 && <span className="emptyState">Nenhuma loja atribuída a esse representante.</span>}
+                    </div>
+                  </div>
+                )
+              })}
+
+              <div>
+                <h3>Sem representante (direto com admin)</h3>
+                <div className="providerRows">
+                  {data.providers.filter((item) => !item.representativeUserId).map((item) => (
+                    <article className="providerRow" key={item.id}>
+                      <div><strong>{item.name}</strong><span>{item.category} • {item.city}</span></div>
+                    </article>
+                  ))}
+                  {data.providers.filter((item) => !item.representativeUserId).length === 0 && <span className="emptyState">Todas as lojas têm representante.</span>}
+                </div>
+              </div>
             </div>}
 
             {adminTab === 'privacidade' && <div className="panel governancePanel adminSectionPanel">
@@ -2717,18 +4244,6 @@ function App() {
         )}
       </section>
     </main>
-  )
-}
-
-function Stat({ icon, label, value }) {
-  return (
-    <div className="stat">
-      <span>{icon}</span>
-      <div>
-        <strong>{value}</strong>
-        <small>{label}</small>
-      </div>
-    </div>
   )
 }
 

@@ -15,7 +15,8 @@ Projeto de agendamento multi-serviÃ§o para homologaÃ§Ã£o de fluxo entre cl
 - Destaques livres em chips na vitrine publica do prestador.
 - Agenda operacional por data, com ocupaÃ§Ã£o do dia, quadro de horÃ¡rios e bloqueios manuais.
 - Filtros de agenda por status e filtros de clientes por relacionamento.
-- AÃ§Ã£o de recontato por WhatsApp para clientes sem retorno.
+- Ação de recontato por WhatsApp para clientes sem retorno, abrindo direto na conversa com o número do cliente quando o contato for um celular reconhecível.
+- Status do agendamento trocado em 1 clique por um grupo de botões (pendente/confirmado/concluído/cancelado), sem abrir menu.
 - Indicadores de hoje, pendentes, clientes, receita estimada, concluÃ­dos e sem retorno.
 - Painel admin para cadastrar prestadores, pausar/ativar operaÃ§Ã£o e personalizar nome/cor da plataforma.
 - Auto cadastro do prestador pela tela inicial, com status `em anÃ¡lise`.
@@ -34,14 +35,17 @@ Projeto de agendamento multi-serviÃ§o para homologaÃ§Ã£o de fluxo entre cl
 - Tema visual por prestador, com cor principal, cor de fundo e estilo da pÃ¡gina pÃºblica.
 - GestÃ£o de clientes com Ãºltimo atendimento, dias sem retorno e alerta de recontato.
 - Agendamento salva o servico especifico em `bookings.service_id`; reservas antigas sem servico continuam aparecendo como "Servico nao especificado".
+- Cliente que volta a agendar com o mesmo prestador no mesmo navegador tem nome, contato e último serviço pré-preenchidos, com opção de "não é você? limpar dados salvos" (dado guardado só no navegador do cliente, por prestador, nunca enviado como consentimento).
+- Consentimento LGPD já registrado para aquele contato com aquele prestador não é pedido do zero de novo — o checkbox nasce marcado e avisa que já há registro, mas continua editável.
+- Link de agendamento/loja inválido ou de prestador sem serviços disponíveis mostra aviso claro em vez de expor a tela interna da plataforma.
 
 ## DecisÃµes de custo zero
 
 - Frontend em React + Vite.
 - Banco de dados no Supabase Free (Postgres) â€” sem custo nesta fase, mas jÃ¡ compartilhado entre quem acessa o app, ao contrÃ¡rio do `localStorage`.
 - Sem servidor prÃ³prio obrigatÃ³rio e sem autenticaÃ§Ã£o paga nesta fase.
-- O login atual Ã© uma simulaÃ§Ã£o de acesso para homologaÃ§Ã£o, nÃ£o autenticaÃ§Ã£o segura de produÃ§Ã£o â€” nÃ£o existe senha nem sessÃ£o real.
-- **Aviso de seguranÃ§a:** como nÃ£o hÃ¡ autenticaÃ§Ã£o real, o banco usa polÃ­ticas de RLS (Row Level Security) abertas â€” a chave pÃºblica (`anon`) do Supabase consegue ler e escrever todos os dados, incluindo nome e contato de clientes. Isso Ã© aceitÃ¡vel sÃ³ porque o app segue em fase de homologaÃ§Ã£o, sem dados reais de clientes. Ver `supabase/schema.sql` para o detalhe das polÃ­ticas.
+- **Atualização 2026-08-29:** o login já usa autenticação real (Supabase Auth, senha de verdade) pra admin e prestador — deixou de ser simulação. O cliente público continua sem login (nome+contato direto no formulário).
+- **Aviso de segurança (atualizado):** o papel `anon` (cliente público, sem login) continua com RLS aberta de propósito — é o que sustenta o agendamento sem conta, aceitável só porque o app segue em fase de homologação sem dados reais de clientes. Já o papel autenticado (admin/representante/prestador) **não é mais aberto** — cada um só acessa o que tem permissão de gerenciar. Ver `guia_claudinha.md` §4.1 e `supabase/schema.sql` para o detalhe das políticas.
 - Mesmo que um cliente receba links de vÃ¡rios prestadores, cada prestador enxerga apenas o vÃ­nculo e histÃ³rico gerados com ele (isso Ã© aplicado em cÃ³digo, nÃ£o por regra de banco, pelo motivo acima).
 - A camada LGPD atual Ã© homologÃ¡vel: registra consentimento e pedidos, mas ainda precisa de autenticaÃ§Ã£o real e trilha de auditoria para produÃ§Ã£o.
 

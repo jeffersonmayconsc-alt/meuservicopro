@@ -1,23 +1,27 @@
 -- ============================================================
--- Meu Serviço Online — schema Supabase (migração de dados, sem autenticação real)
+-- Meu Serviço Online — schema Supabase
 --
--- AVISO DE SEGURANÇA: RLS está habilitado em todas as tabelas abaixo
--- com uma política permissiva liberando leitura/escrita total para o
--- papel `anon`. Isso é INTENCIONAL nesta fase: o app ainda não tem
--- autenticação real (o login é só um seletor de papel, sem senha),
--- então não existe sessão pra restringir as políticas. Na prática,
--- qualquer pessoa com a chave anon (que já vai embutida no bundle do
--- cliente por design do Supabase) consegue ler/escrever TODAS as
--- linhas de TODAS as tabelas, incluindo nome e contato de clientes.
--- Aceitável só porque este app segue em fase de homologação, sem
--- dados reais de clientes. Precisa ser revisto antes de qualquer uso
--- com dados reais. Ver README.md.
+-- AVISO DE SEGURANÇA (revisado 2026-08-29, ver guia_claudinha.md §4.1):
+-- o papel `anon` continua com política permissiva liberando leitura/escrita
+-- total — INTENCIONAL, é o que sustenta o fluxo público do cliente, que
+-- nunca se autentica. Na prática, qualquer pessoa com a chave anon (que já
+-- vai embutida no bundle do cliente por design do Supabase) consegue
+-- ler/escrever TODAS as linhas de TODAS as tabelas, incluindo nome e
+-- contato de clientes. Aceitável só porque este app segue em fase de
+-- homologação, sem dados reais de clientes.
+-- O papel `authenticated` JÁ NÃO é mais aberto: desde a migração
+-- 20260829150000_provider_ownership_rls.sql, admin master
+-- (is_master_admin()) tem acesso total e um prestador autenticado só
+-- lê/escreve o que pertence ao provider_id que ele é dono
+-- (owns_provider(), via providers.owner_user_id). Ver README.md.
 -- ============================================================
 
 create table public.platform_settings (
   id integer primary key default 1 check (id = 1),
   brand_name text not null default 'Meu Serviço Online',
   brand_accent text not null default '#2563eb',
+  brand_logo_url text not null default '',
+  brand_logotype_url text not null default '',
   brand_support text not null default 'contato@meuservicopro.local',
   brand_privacy_email text not null default 'privacidade@meuservicopro.local',
   approval_mode text not null default 'manual' check (approval_mode in ('manual', 'automatico')),
@@ -55,9 +59,25 @@ create table public.providers (
   approval_status text not null default 'analise' check (approval_status in ('analise', 'aprovado', 'pausado')),
   capacity integer not null default 6,
   slug text not null unique,
-  created_at timestamptz not null default now()
+  created_at timestamptz not null default now(),
+  owner_user_id uuid references auth.users (id) on delete set null,
+  show_prices boolean not null default true
 );
 create index providers_active_idx on public.providers (active);
+create unique index providers_owner_user_id_idx on public.providers (owner_user_id) where owner_user_id is not null;
+
+create table public.provider_resources (
+  id text primary key,
+  provider_id text not null references public.providers (id) on delete cascade,
+  name text not null,
+  bio text not null default '',
+  photo_url text not null default '',
+  active boolean not null default true,
+  position integer not null default 0,
+  created_at timestamptz not null default now()
+);
+create index provider_resources_provider_id_idx on public.provider_resources (provider_id);
+create index provider_resources_provider_active_idx on public.provider_resources (provider_id, active);
 
 create table public.provider_services (
   id text primary key,
@@ -96,10 +116,13 @@ create table public.bookings (
   time text not null,
   status text not null default 'pendente' check (status in ('pendente', 'confirmado', 'concluido', 'cancelado')),
   notes text not null default '',
-  created_at timestamptz not null default now()
+  created_at timestamptz not null default now(),
+  resource_id text references public.provider_resources (id) on delete set null,
+  extra_services text not null default ''
 );
 create index bookings_provider_id_idx on public.bookings (provider_id);
 create index bookings_provider_date_idx on public.bookings (provider_id, date);
+create index bookings_resource_id_idx on public.bookings (resource_id);
 
 create table public.clients (
   id text primary key,
@@ -127,10 +150,12 @@ create table public.blocked_slots (
   date date not null,
   time text not null,
   reason text not null default '',
-  created_at timestamptz not null default now()
+  created_at timestamptz not null default now(),
+  resource_id text references public.provider_resources (id) on delete set null
 );
 create index blocked_slots_provider_id_idx on public.blocked_slots (provider_id);
 create index blocked_slots_provider_date_idx on public.blocked_slots (provider_id, date);
+create index blocked_slots_resource_id_idx on public.blocked_slots (resource_id);
 
 create table public.privacy_requests (
   id text primary key,
@@ -170,9 +195,81 @@ create table public.client_invites (
 create index client_invites_provider_id_idx on public.client_invites (provider_id);
 create index client_invites_status_idx on public.client_invites (status);
 
--- RLS: aberto para anon (sem autenticação real nessa fase — ver aviso no topo do arquivo)
+create table public.analytics_events (
+  id uuid primary key default gen_random_uuid(),
+  provider_id text not null references public.providers (id) on delete cascade,
+  service_id text references public.provider_services (id) on delete set null,
+  event_type text not null check (event_type in ('visualizou_servico', 'iniciou_agendamento', 'agendamento_concluido')),
+  visitor_id text not null,
+  source text not null default 'direto',
+  created_at timestamptz not null default now()
+);
+create index analytics_events_provider_created_idx on public.analytics_events (provider_id, created_at desc);
+create index analytics_events_service_created_idx on public.analytics_events (service_id, created_at desc);
+create index analytics_events_funnel_idx on public.analytics_events (provider_id, event_type, created_at desc);
+
+-- Identidades e hierarquia de responsabilidade.
+create table public.platform_representatives (
+  user_id uuid primary key references auth.users (id) on delete cascade,
+  email text not null,
+  status text not null default 'ativo' check (status in ('ativo', 'suspenso')),
+  invited_by uuid references auth.users (id) on delete set null,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+create unique index platform_representatives_email_idx on public.platform_representatives (lower(email));
+
+create table public.representative_invites (
+  id uuid primary key default gen_random_uuid(),
+  token text unique not null default replace(gen_random_uuid()::text, '-', ''),
+  invited_email text not null,
+  status text not null default 'ativo' check (status in ('ativo', 'usado', 'cancelado')),
+  created_by uuid not null references auth.users (id) on delete cascade,
+  accepted_by uuid references auth.users (id) on delete set null,
+  expires_at timestamptz not null default (now() + interval '7 days'),
+  accepted_at timestamptz,
+  created_at timestamptz not null default now()
+);
+
+create table public.provider_accounts (
+  user_id uuid primary key references auth.users (id) on delete cascade,
+  provider_id text not null unique references public.providers (id) on delete cascade,
+  created_at timestamptz not null default now()
+);
+
+create table public.client_accounts (
+  user_id uuid primary key references auth.users (id) on delete cascade,
+  client_id text not null unique references public.clients (id) on delete cascade,
+  created_at timestamptz not null default now()
+);
+
+-- Comunicados internos do admin master pros prestadores/representantes
+-- (banner no painel deles). Não é consultado pelo fluxo público anon.
+create table public.platform_announcements (
+  id uuid primary key default gen_random_uuid(),
+  title text not null,
+  message text not null,
+  active boolean not null default true,
+  created_at timestamptz not null default now()
+);
+create index platform_announcements_active_idx on public.platform_announcements (active);
+
+alter table public.providers add column representative_user_id uuid
+  references public.platform_representatives (user_id) on delete set null;
+alter table public.provider_invites
+  add column created_by_user_id uuid references auth.users (id) on delete set null,
+  add column representative_user_id uuid references public.platform_representatives (user_id) on delete set null;
+create index providers_representative_user_id_idx on public.providers (representative_user_id);
+create index provider_invites_representative_user_id_idx on public.provider_invites (representative_user_id);
+
+-- RLS de dados (revisado 2026-08-29, ver §4.1 do guia_claudinha.md):
+-- `anon` continua totalmente aberto — sustenta o fluxo público do cliente,
+-- que nunca se autentica. `authenticated` deixou de ser aberto: admin master
+-- (is_master_admin()) tem acesso total; um prestador autenticado só
+-- lê/escreve o que pertence ao provider_id que ele é dono (owns_provider()).
 alter table public.platform_settings enable row level security;
 alter table public.providers enable row level security;
+alter table public.provider_resources enable row level security;
 alter table public.provider_services enable row level security;
 alter table public.portfolio_photos enable row level security;
 alter table public.bookings enable row level security;
@@ -182,18 +279,191 @@ alter table public.blocked_slots enable row level security;
 alter table public.privacy_requests enable row level security;
 alter table public.provider_invites enable row level security;
 alter table public.client_invites enable row level security;
+alter table public.analytics_events enable row level security;
 
-create policy "anon_full_access" on public.platform_settings for all to anon, authenticated using (true) with check (true);
-create policy "anon_full_access" on public.providers        for all to anon, authenticated using (true) with check (true);
-create policy "anon_full_access" on public.provider_services for all to anon, authenticated using (true) with check (true);
-create policy "anon_full_access" on public.portfolio_photos  for all to anon, authenticated using (true) with check (true);
-create policy "anon_full_access" on public.bookings          for all to anon, authenticated using (true) with check (true);
-create policy "anon_full_access" on public.clients           for all to anon, authenticated using (true) with check (true);
-create policy "anon_full_access" on public.provider_clients  for all to anon, authenticated using (true) with check (true);
-create policy "anon_full_access" on public.blocked_slots     for all to anon, authenticated using (true) with check (true);
-create policy "anon_full_access" on public.privacy_requests  for all to anon, authenticated using (true) with check (true);
-create policy "anon_full_access" on public.provider_invites  for all to anon, authenticated using (true) with check (true);
-create policy "anon_full_access" on public.client_invites    for all to anon, authenticated using (true) with check (true);
+create or replace function public.is_master_admin()
+returns boolean
+language sql stable security definer set search_path = public, auth
+as $$
+  select coalesce(auth.jwt() ->> 'email', '') = 'jeffersonmaycon.sc@gmail.com';
+$$;
+
+create or replace function public.owns_provider(target_provider_id text)
+returns boolean
+language sql stable security definer set search_path = public, auth
+as $$
+  select exists (
+    select 1 from public.providers p
+    where p.id = target_provider_id and p.owner_user_id = auth.uid()
+  );
+$$;
+
+revoke all on function public.is_master_admin() from public, anon;
+grant execute on function public.is_master_admin() to authenticated;
+revoke all on function public.owns_provider(text) from public, anon;
+grant execute on function public.owns_provider(text) to authenticated;
+
+create or replace function public.admin_link_provider_owner(target_provider_id text, owner_email text)
+returns void
+language plpgsql security definer set search_path = public, auth
+as $$
+declare
+  found_user_id uuid;
+begin
+  if not public.is_master_admin() then
+    raise exception 'Somente o admin master pode vincular o dono de um prestador.';
+  end if;
+
+  select id into found_user_id from auth.users where lower(email) = lower(owner_email) limit 1;
+
+  if found_user_id is null then
+    raise exception 'Nenhuma conta encontrada com esse e-mail. A pessoa precisa fazer login pelo menos uma vez antes de ser vinculada.';
+  end if;
+
+  update public.providers set owner_user_id = found_user_id where id = target_provider_id;
+end;
+$$;
+
+revoke all on function public.admin_link_provider_owner(text, text) from public, anon;
+grant execute on function public.admin_link_provider_owner(text, text) to authenticated;
+
+create policy "anon_full_access" on public.platform_settings for select to anon using (true);
+create policy "authenticated_scoped_access" on public.platform_settings for all to authenticated
+  using (public.is_master_admin()) with check (public.is_master_admin());
+
+create policy "anon_full_access" on public.providers for all to anon using (true) with check (true);
+create policy "authenticated_scoped_access" on public.providers for all to authenticated
+  using (public.is_master_admin() or owner_user_id = auth.uid())
+  with check (public.is_master_admin() or owner_user_id = auth.uid());
+
+create policy "anon_full_access" on public.provider_resources for all to anon using (true) with check (true);
+create policy "authenticated_scoped_access" on public.provider_resources for all to authenticated
+  using (public.is_master_admin() or public.owns_provider(provider_id))
+  with check (public.is_master_admin() or public.owns_provider(provider_id));
+
+create policy "anon_full_access" on public.provider_services for all to anon using (true) with check (true);
+create policy "authenticated_scoped_access" on public.provider_services for all to authenticated
+  using (public.is_master_admin() or public.owns_provider(provider_id))
+  with check (public.is_master_admin() or public.owns_provider(provider_id));
+
+create policy "anon_full_access" on public.portfolio_photos for all to anon using (true) with check (true);
+create policy "authenticated_scoped_access" on public.portfolio_photos for all to authenticated
+  using (public.is_master_admin() or public.owns_provider(provider_id))
+  with check (public.is_master_admin() or public.owns_provider(provider_id));
+
+create policy "anon_full_access" on public.bookings for all to anon using (true) with check (true);
+create policy "authenticated_scoped_access" on public.bookings for all to authenticated
+  using (public.is_master_admin() or public.owns_provider(provider_id))
+  with check (public.is_master_admin() or public.owns_provider(provider_id));
+
+create policy "anon_full_access" on public.blocked_slots for all to anon using (true) with check (true);
+create policy "authenticated_scoped_access" on public.blocked_slots for all to authenticated
+  using (public.is_master_admin() or public.owns_provider(provider_id))
+  with check (public.is_master_admin() or public.owns_provider(provider_id));
+
+create policy "anon_full_access" on public.provider_clients for all to anon using (true) with check (true);
+create policy "authenticated_scoped_access" on public.provider_clients for all to authenticated
+  using (public.is_master_admin() or public.owns_provider(provider_id))
+  with check (public.is_master_admin() or public.owns_provider(provider_id));
+
+create policy "anon_full_access" on public.clients for all to anon using (true) with check (true);
+create policy "authenticated_scoped_access" on public.clients for all to authenticated
+  using (
+    public.is_master_admin()
+    or exists (select 1 from public.provider_clients pc where pc.client_id = clients.id and public.owns_provider(pc.provider_id))
+  )
+  with check (
+    public.is_master_admin()
+    or exists (select 1 from public.provider_clients pc where pc.client_id = clients.id and public.owns_provider(pc.provider_id))
+  );
+
+create policy "anon_full_access" on public.privacy_requests for all to anon using (true) with check (true);
+create policy "authenticated_scoped_access" on public.privacy_requests for all to authenticated
+  using (public.is_master_admin() or (provider_id is not null and public.owns_provider(provider_id)))
+  with check (public.is_master_admin() or (provider_id is not null and public.owns_provider(provider_id)));
+
+create policy "anon_full_access" on public.provider_invites for all to anon using (true) with check (true);
+create policy "authenticated_scoped_access" on public.provider_invites for all to authenticated
+  using (public.is_master_admin()) with check (public.is_master_admin());
+
+create policy "anon_full_access" on public.client_invites for all to anon using (true) with check (true);
+create policy "authenticated_scoped_access" on public.client_invites for all to authenticated
+  using (public.is_master_admin() or public.owns_provider(provider_id))
+  with check (public.is_master_admin() or public.owns_provider(provider_id));
+
+create policy "anon_full_access" on public.analytics_events for all to anon using (true) with check (true);
+create policy "authenticated_scoped_access" on public.analytics_events for all to authenticated
+  using (public.is_master_admin() or public.owns_provider(provider_id))
+  with check (public.is_master_admin() or public.owns_provider(provider_id));
+
+alter table public.platform_announcements enable row level security;
+create policy "authenticated_read_active_announcements" on public.platform_announcements for select to authenticated
+  using (active or public.is_master_admin());
+create policy "master_manage_announcements" on public.platform_announcements for all to authenticated
+  using (public.is_master_admin()) with check (public.is_master_admin());
 
 grant usage on schema public to anon, authenticated;
 grant select, insert, update, delete on all tables in schema public to anon, authenticated;
+
+-- Sessões: leitura restrita ao próprio usuário autenticado.
+create or replace function public.list_my_auth_sessions()
+returns table (
+  session_id uuid,
+  created_at timestamptz,
+  last_seen_at timestamptz,
+  user_agent text,
+  ip_address text,
+  is_current boolean
+)
+language sql
+security definer
+set search_path = public, auth
+stable
+as $$
+  select
+    sessions.id,
+    sessions.created_at,
+    coalesce(sessions.refreshed_at, sessions.updated_at),
+    sessions.user_agent,
+    host(sessions.ip),
+    sessions.id = nullif(auth.jwt() ->> 'session_id', '')::uuid
+  from auth.sessions as sessions
+  where sessions.user_id = auth.uid()
+    and (sessions.not_after is null or sessions.not_after > now())
+  order by 6 desc, 3 desc;
+$$;
+
+revoke all on function public.list_my_auth_sessions() from public, anon;
+grant execute on function public.list_my_auth_sessions() to authenticated;
+
+create or replace function public.revoke_my_auth_sessions(target_session_ids uuid[])
+returns integer
+language plpgsql security definer set search_path = public, auth
+as $$
+declare current_session_id uuid := nullif(auth.jwt() ->> 'session_id', '')::uuid;
+declare revoked_count integer;
+begin
+  if auth.uid() is null then raise exception 'Autenticação necessária.'; end if;
+  delete from auth.sessions
+  where user_id = auth.uid()
+    and id = any(coalesce(target_session_ids, array[]::uuid[]))
+    and id is distinct from current_session_id;
+  get diagnostics revoked_count = row_count;
+  return revoked_count;
+end;
+$$;
+
+revoke all on function public.revoke_my_auth_sessions(uuid[]) from public, anon;
+grant execute on function public.revoke_my_auth_sessions(uuid[]) to authenticated;
+
+alter table public.platform_settings
+  add column if not exists brand_logotype_size integer not null default 64;
+
+alter table public.platform_settings
+  drop constraint if exists platform_settings_brand_logotype_size_check;
+
+alter table public.platform_settings
+  add column if not exists invite_email_enabled boolean not null default false,
+  add column if not exists invite_sender_name text not null default 'Meu Serviço Online',
+  add column if not exists invite_sender_email text not null default '',
+  add column if not exists invite_reply_to_email text not null default '';

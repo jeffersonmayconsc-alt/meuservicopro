@@ -52,6 +52,14 @@ values
   ('ps-p3-2', 'p3', 'Projeto sob medida', 'Diagnostico e proposta para projetos com escopo aberto.', 0, 'sob_consulta', null, true, 1)
 on conflict (id) do nothing;
 
+-- Recursos: exemplo opcional de multi-profissional numa mesma loja (p1).
+-- p2 e p3 seguem sem nenhum recurso cadastrado, ou seja, funcionam como
+-- sempre funcionaram — 1 agenda só, sem exigir escolha de recurso.
+insert into public.provider_resources (id, provider_id, name, bio, active, position) values
+  ('pr-p1-1', 'p1', 'Dra. Marina Lopes', 'Psicologa clinica, foco em ansiedade e transicoes de vida.', true, 0),
+  ('pr-p1-2', 'p1', 'Dr. Felipe Nogueira', 'Psicologo clinico, foco em relacionamentos e terapia de casal.', true, 1)
+on conflict (id) do nothing;
+
 insert into public.clients (id, name, contact, consent, created_at) values
   ('c1', 'Ana Beatriz', 'ana@email.com', true, '2026-08-24T12:00:00.000Z'),
   ('c2', 'Carlos Mendes', 'carlos@email.com', true, '2026-08-24T12:00:00.000Z'),

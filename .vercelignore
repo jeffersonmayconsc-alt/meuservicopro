@@ -1,0 +1,13 @@
+# Banco e documentação não são necessários para compilar o frontend.
+supabase/
+Guia_claudin.md
+guia_claudinha.md
+README.md
+
+# Arquivos locais e saídas reproduzíveis.
+.git/
+.github/
+.vscode/
+logs/
+dist/
+*.log
