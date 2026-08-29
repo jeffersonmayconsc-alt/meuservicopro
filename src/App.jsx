@@ -2836,15 +2836,10 @@ function App() {
   return (
     <main className={`shell${sidebarCollapsed ? ' sidebarCollapsed' : ''}`} style={{ '--accent': data.brand.accent, '--sidebar-logotype-height': `${data.brand.logotypeSize || 64}px` }}>
       <aside className={`sidebar${sidebarCollapsed ? ' collapsed' : ''}`}>
-        {sidebarCollapsed ? (
-          (data.brand.logoUrl || data.brand.logotypeUrl) && <div className="brand sidebarBrand" title={data.brand.name}>
-            <img className="sidebarLogoIcon" src={data.brand.logoUrl || data.brand.logotypeUrl} alt={data.brand.name} />
-          </div>
-        ) : (
-          data.brand.logotypeUrl && <div className="brand sidebarBrand" title={data.brand.name}>
-            <img className="sidebarLogotype" src={data.brand.logotypeUrl} alt={data.brand.name} />
-          </div>
-        )}
+        {(data.brand.logotypeUrl || data.brand.logoUrl) && <div className="brand sidebarBrand" title={data.brand.name}>
+          {data.brand.logotypeUrl && <img className="sidebarLogotype" src={data.brand.logotypeUrl} alt={data.brand.name} />}
+          <img className="sidebarLogoIcon" src={data.brand.logoUrl || data.brand.logotypeUrl} alt={data.brand.name} />
+        </div>}
 
         <div className="sidebarAccountBar">
           <button type="button" className={`sidebarIdentity${view === 'conta' ? ' active' : ''}`} onClick={() => { setAccountLoading(true); setView('conta') }} title="Abrir minha conta">
