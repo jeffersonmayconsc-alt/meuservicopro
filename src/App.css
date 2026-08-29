@@ -109,8 +109,8 @@
 
 .loginLogotype {
   display: block;
-  max-width: 220px;
-  max-height: 64px;
+  max-width: 320px;
+  max-height: 110px;
   object-fit: contain;
 }
 
