@@ -2433,6 +2433,11 @@ function App() {
               <span className="loginKicker">ACESSO SEGURO</span>
               <h1>Sua operação começa pela agenda.</h1>
               <p>Organize atendimentos, disponibilidade, clientes e serviços em um único lugar.</p>
+              <div className="loginFeatures">
+                <span><Clock3 size={14} /> Agenda em tempo real</span>
+                <span><Users size={14} /> Clientes organizados</span>
+                <span><TrendingUp size={14} /> Crescimento visível</span>
+              </div>
             </div>
             <div className="loginSecurity"><ShieldCheck size={18} /><span>Ambiente de homologação. Não utilize dados reais.</span></div>
           </aside>

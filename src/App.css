@@ -67,6 +67,9 @@
 .loginContextCopy h1 { max-width: 360px; font-size: 2.15rem; line-height: 1.15; }
 .loginContextCopy p { margin: 0; max-width: 360px; color: var(--text-soft); line-height: 1.65; }
 .loginKicker { color: var(--accent); font-size: .72rem; font-weight: 900; }
+.loginFeatures { display: flex; flex-direction: column; gap: 8px; margin-top: 4px; }
+.loginFeatures span { display: flex; align-items: center; gap: 8px; color: var(--text-soft); font-size: .82rem; font-weight: 600; }
+.loginFeatures svg { flex: 0 0 auto; color: var(--accent); }
 .loginSecurity { display: flex; align-items: flex-start; gap: 10px; margin-top: auto; padding-top: 32px; color: var(--text-soft); font-size: .82rem; line-height: 1.45; }
 .loginSecurity svg { flex: 0 0 auto; color: var(--accent); }
 
@@ -74,6 +77,11 @@
 .loginAccessHeader { display: flex; justify-content: space-between; align-items: flex-start; gap: 20px; }
 .loginAccessHeader h2 { font-size: 1.45rem; }
 .loginAccessHeader p { margin: 6px 0 0; color: var(--text-soft); }
+.loginAccessHeader .appearanceControl { grid-template-columns: repeat(3, 32px); }
+.loginAccessHeader .appearanceControl button { width: 32px; height: 28px; }
+.loginAccess .fieldWithIcon { min-height: 40px; grid-template-columns: 36px minmax(0, 1fr) 36px; }
+.loginAccess .fieldWithIcon input { min-height: 38px; }
+.loginAccess .fieldWithIcon button { width: 36px; height: 36px; }
 
 .loginForm { display: grid; gap: 16px; }
 
