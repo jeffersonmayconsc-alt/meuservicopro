@@ -306,22 +306,19 @@ async function optionalSelect(table) {
   return data || []
 }
 
-async function fetchInitialData() {
-  const [settingsRes, providersRes, providerServicesRes, bookingsRes, clientsRes, providerClientsRes, blockedSlotsRes, privacyRequestsRes] =
-    await Promise.all([
-      supabase.from('platform_settings').select('*').eq('id', 1).maybeSingle(),
-      supabase.from('providers').select('*'),
-      supabase.from('provider_services').select('*'),
-      supabase.from('bookings').select('*'),
-      supabase.from('clients').select('*'),
-      supabase.from('provider_clients').select('*'),
-      supabase.from('blocked_slots').select('*'),
-      supabase.from('privacy_requests').select('*'),
-    ])
+// Só o suficiente pra decidir o que renderizar primeiro: marca/config (login
+// tem cara própria desde a primeira pintura) e o necessário pra resolvePublicRoute
+// decidir se quem chegou é um cliente com link direto de um prestador específico
+// (providers/providerServices/clientInvites). O resto da plataforma (bookings,
+// clientes, etc. de TODOS os prestadores) não precisa existir ainda pra isso.
+async function fetchCriticalData() {
+  const [settingsRes, providersRes, providerServicesRes] = await Promise.all([
+    supabase.from('platform_settings').select('*').eq('id', 1).maybeSingle(),
+    supabase.from('providers').select('*'),
+    supabase.from('provider_services').select('*'),
+  ])
 
-  const failed = [settingsRes, providersRes, providerServicesRes, bookingsRes, clientsRes, providerClientsRes, blockedSlotsRes, privacyRequestsRes].find(
-    (res) => res.error,
-  )
+  const failed = [settingsRes, providersRes, providerServicesRes].find((res) => res.error)
   if (failed) throw failed.error
 
   const { brand, settings } = mapPlatformSettingsRow(settingsRes.data)
@@ -331,17 +328,54 @@ async function fetchInitialData() {
     settings,
     providers: providersRes.data.map(mapProviderRow),
     providerServices: providerServicesRes.data.map(mapProviderServiceRow),
-    providerResources: (await optionalSelect('provider_resources')).map(mapProviderResourceRow),
-    portfolioPhotos: [],
-    bookings: bookingsRes.data.map(mapBookingRow),
-    clients: clientsRes.data.map(mapClientRow),
-    providerClients: providerClientsRes.data.map(mapProviderClientRow),
-    blockedSlots: blockedSlotsRes.data.map(mapBlockedSlotRow),
-    privacyRequests: privacyRequestsRes.data.map(mapPrivacyRequestRow),
-    providerInvites: (await optionalSelect('provider_invites')).map(mapProviderInviteRow),
     clientInvites: (await optionalSelect('client_invites')).map(mapClientInviteRow),
-    analyticsEvents: (await optionalSelect('analytics_events')).map(mapAnalyticsEventRow),
-    announcements: (await optionalSelect('platform_announcements')).map(mapAnnouncementRow),
+    providerResources: [],
+    portfolioPhotos: [],
+    bookings: [],
+    clients: [],
+    providerClients: [],
+    blockedSlots: [],
+    privacyRequests: [],
+    providerInvites: [],
+    analyticsEvents: [],
+    announcements: [],
+  }
+}
+
+// Carregado depois, em segundo plano, sem bloquear a primeira pintura — uma
+// falha aqui não derruba o app (fica como aviso no console e os campos
+// continuam vazios) porque, a essa altura, quem estava vendo a tela de
+// carregamento já está vendo login/agenda de verdade.
+async function fetchBackgroundData() {
+  const [bookingsRes, clientsRes, providerClientsRes, blockedSlotsRes, privacyRequestsRes] = await Promise.all([
+    supabase.from('bookings').select('*'),
+    supabase.from('clients').select('*'),
+    supabase.from('provider_clients').select('*'),
+    supabase.from('blocked_slots').select('*'),
+    supabase.from('privacy_requests').select('*'),
+  ])
+
+  for (const res of [bookingsRes, clientsRes, providerClientsRes, blockedSlotsRes, privacyRequestsRes]) {
+    if (res.error) console.warn('Não foi possível carregar parte dos dados em segundo plano.', res.error.message)
+  }
+
+  const [providerResources, providerInvites, analyticsEvents, announcements] = await Promise.all([
+    optionalSelect('provider_resources'),
+    optionalSelect('provider_invites'),
+    optionalSelect('analytics_events'),
+    optionalSelect('platform_announcements'),
+  ])
+
+  return {
+    bookings: bookingsRes.error ? [] : bookingsRes.data.map(mapBookingRow),
+    clients: clientsRes.error ? [] : clientsRes.data.map(mapClientRow),
+    providerClients: providerClientsRes.error ? [] : providerClientsRes.data.map(mapProviderClientRow),
+    blockedSlots: blockedSlotsRes.error ? [] : blockedSlotsRes.data.map(mapBlockedSlotRow),
+    privacyRequests: privacyRequestsRes.error ? [] : privacyRequestsRes.data.map(mapPrivacyRequestRow),
+    providerResources: providerResources.map(mapProviderResourceRow),
+    providerInvites: providerInvites.map(mapProviderInviteRow),
+    analyticsEvents: analyticsEvents.map(mapAnalyticsEventRow),
+    announcements: announcements.map(mapAnnouncementRow),
   }
 }
 
@@ -766,7 +800,7 @@ function App() {
   useEffect(() => {
     let cancelled = false
 
-    fetchInitialData()
+    fetchCriticalData()
       .then((initial) => {
         if (cancelled) return
         setData(initial)
@@ -782,6 +816,15 @@ function App() {
           }))
         }
         setLoading(false)
+
+        fetchBackgroundData()
+          .then((extra) => {
+            if (cancelled) return
+            setData((current) => ({ ...current, ...extra }))
+          })
+          .catch((error) => {
+            console.warn('Falha ao carregar dados complementares em segundo plano.', error)
+          })
       })
       .catch((error) => {
         if (cancelled) return
@@ -793,6 +836,13 @@ function App() {
       cancelled = true
     }
   }, [])
+
+  useEffect(() => {
+    if (!data || !publicProviderId || !bookingForm.contact || bookingForm.consent) return
+    if (hasExistingConsent(data, publicProviderId, bookingForm.contact)) {
+      setBookingForm((current) => (current.consent ? current : { ...current, consent: true }))
+    }
+  }, [data?.clients, data?.providerClients, publicProviderId, bookingForm.contact, bookingForm.consent])
 
   useEffect(() => {
     if (!data) return
