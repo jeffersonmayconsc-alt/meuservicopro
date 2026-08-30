@@ -3493,9 +3493,11 @@ function App() {
                   <p className="eyebrow">Painel do prestador</p>
                   <h2>{provider.name}</h2>
                 </div>
-                <select value={selectedProvider} onChange={(event) => setSelectedProvider(event.target.value)}>
-                  {data.providers.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}
-                </select>
+                {(session.isMasterAdmin || session.isRepresentative) && (
+                  <select value={selectedProvider} onChange={(event) => setSelectedProvider(event.target.value)}>
+                    {data.providers.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}
+                  </select>
+                )}
               </div>
 
               {providerTab === 'loja' && (
