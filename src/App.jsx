@@ -503,6 +503,43 @@ function serviceWithProvider(service, providers) {
   return provider ? { ...service, provider } : null
 }
 
+async function withTimeout(promise, timeoutMs, timeoutMessage) {
+  let timeoutId
+  const timeout = new Promise((_, reject) => {
+    timeoutId = window.setTimeout(() => reject(new Error(timeoutMessage)), timeoutMs)
+  })
+
+  try {
+    return await Promise.race([promise, timeout])
+  } finally {
+    window.clearTimeout(timeoutId)
+  }
+}
+
+async function functionErrorMessage(error, fallback) {
+  const response = error?.context
+  if (response && typeof response.json === 'function') {
+    try {
+      const body = await response.clone().json()
+      if (body?.error) return body.error
+      if (body?.message) return body.message
+    } catch {
+      // Keep the fallback below when the function response is not JSON.
+    }
+  }
+
+  return error?.message || fallback
+}
+
+function provisionDebugSnapshot(status, target, detail) {
+  return {
+    at: new Date().toLocaleString('pt-BR'),
+    status,
+    target,
+    detail,
+  }
+}
+
 function App() {
   const [appearance, setAppearance] = useState(() => localStorage.getItem('agenda-appearance') || 'system')
   const [showPassword, setShowPassword] = useState(false)
@@ -521,6 +558,8 @@ function App() {
   const [forcedPasswordChange, setForcedPasswordChange] = useState(false)
   const [passwordProvisionNotice, setPasswordProvisionNotice] = useState(null)
   const [provisioningTarget, setProvisioningTarget] = useState('')
+  const [provisioningNotice, setProvisioningNotice] = useState('')
+  const [provisioningDebug, setProvisioningDebug] = useState(null)
   const [representativeSecurity, setRepresentativeSecurity] = useState({})
   const trackedAnalytics = useRef(new Set())
   const [publicProviderId, setPublicProviderId] = useState(null)
@@ -765,18 +804,37 @@ function App() {
   }, [])
 
   const resolvePublicRoute = (currentData) => {
+    const representativeToken = getInviteToken('representante')
+    if (representativeToken) {
+      setProviderInviteToken(null)
+      setClientInviteToken(null)
+      setPublicProviderId(null)
+      setSession(null)
+      setView('cliente')
+      return true
+    }
+
     const providerToken = getInviteToken('prestador')
     if (providerToken) {
       setProviderInviteToken(providerToken)
       setClientInviteToken(null)
       setPublicProviderId(null)
       setSession(null)
+      setView('cliente')
       return false
     }
 
     const clientToken = getInviteToken('cliente')
-    const clientInvite = currentData.clientInvites.find((invite) => invite.token === clientToken && invite.status === 'ativo')
-    if (clientInvite) {
+    if (clientToken) {
+      const clientInvite = currentData.clientInvites.find((invite) => invite.token === clientToken && invite.status === 'ativo')
+      if (!clientInvite) {
+        setClientInviteToken(clientToken)
+        setProviderInviteToken(null)
+        setPublicProviderId(null)
+        setSession(null)
+        setView('cliente')
+        return true
+      }
       const invitedProvider = currentData.providers.find((item) => item.id === clientInvite.providerId && item.active)
       if (invitedProvider) {
         setClientInviteToken(clientToken)
@@ -945,6 +1003,13 @@ function App() {
   const cartServices = publicServices.filter((item) => bookingForm.cartServiceIds.includes(item.id) && item.id !== bookingService?.id)
   const trackedServiceId = bookingService?.id
   const trackedProviderId = bookingService?.providerId
+
+  const singlePublicResourceId = publicResources.length === 1 ? publicResources[0].id : null
+  useEffect(() => {
+    if (singlePublicResourceId && !bookingForm.resourceId) {
+      setBookingForm((current) => (current.resourceId ? current : { ...current, resourceId: singlePublicResourceId }))
+    }
+  }, [singlePublicResourceId, bookingForm.resourceId])
   const activeSessionRole = session?.role
 
   useEffect(() => {
@@ -1161,6 +1226,9 @@ function App() {
     ? data.providerInvites.filter((item) => item.representativeUserId === (session?.isRepresentative ? authUser?.id : representativePreviewId))
     : []
   const openPrivacyRequests = data ? data.privacyRequests.filter((request) => request.status === 'aberta').length : 0
+  const activeProvidersWithoutAccess = data
+    ? data.providers.filter((item) => item.active && item.approvalStatus === 'aprovado' && !item.ownerUserId).length
+    : 0
 
   const updateSetting = async (field, value) => {
     updateData((current) => ({
@@ -1970,6 +2038,27 @@ function App() {
     setInviteEmailConnection({ checked: true, configured: !error && Boolean(status?.configured) })
   }
 
+  const refreshRepresentativeSecurity = async (targetRepresentatives = representatives) => {
+    if (!session?.isMasterAdmin || targetRepresentatives.length === 0) {
+      setRepresentativeSecurity({})
+      return
+    }
+
+    const { data: rows, error } = await supabase
+      .rpc('get_account_security_status', { target_user_ids: targetRepresentatives.map((item) => item.user_id) })
+    if (error) return
+
+    const map = {}
+    for (const row of rows || []) {
+      map[row.user_id] = {
+        emailConfirmed: row.email_confirmed,
+        mustChangePassword: row.must_change_password,
+        lastSignInAt: row.last_sign_in_at,
+      }
+    }
+    setRepresentativeSecurity(map)
+  }
+
   const copyRepresentativeInviteLink = async (invite) => {
     try {
       await navigator.clipboard.writeText(getRepresentativeInviteLink(invite))
@@ -1994,14 +2083,43 @@ function App() {
 
   const provisionAccountAccess = async (email, options = {}) => {
     const passwordLength = Math.max(12, data.settings.minPasswordLength || 8)
-    const { data: result, error } = await supabase.functions.invoke('admin-set-password', {
-      body: { email: email.trim().toLowerCase(), inviteToken: options.inviteToken || undefined, passwordLength },
-    })
+    const targetEmail = email.trim().toLowerCase()
+    setProvisioningNotice('')
+    const payload = {
+      email: targetEmail,
+      userId: options.userId || undefined,
+      inviteToken: options.inviteToken || undefined,
+      passwordLength,
+    }
+    let response
+    try {
+      response = await withTimeout(
+        supabase.functions.invoke('admin-set-password', { body: payload }),
+        20000,
+        'A definicao de senha demorou demais. Confira a conexao com a Edge Function admin-set-password e tente novamente.',
+      )
+    } catch (error) {
+      setProvisioningDebug(provisionDebugSnapshot(
+        'falha',
+        targetEmail,
+        error instanceof Error ? error.message : 'Erro inesperado na chamada.',
+      ))
+      throw error
+    }
+    const { data: result, error } = response
     if (error || result?.error) {
-      alert(result?.error || 'Não foi possível definir a senha de acesso.')
+      const detail = result?.error || await functionErrorMessage(error, 'Nao foi possivel definir a senha de acesso.')
+      setProvisioningDebug(provisionDebugSnapshot('erro', targetEmail, detail))
+      setProvisioningNotice(detail)
       return null
     }
     setPasswordProvisionNotice({ email: result.email, tempPassword: result.tempPassword })
+    setProvisioningNotice('')
+    setProvisioningDebug(provisionDebugSnapshot(
+      'sucesso',
+      targetEmail,
+      result.created ? 'Conta criada e senha temporaria gerada.' : 'Senha temporaria atualizada.',
+    ))
     return result
   }
 
@@ -2009,7 +2127,10 @@ function App() {
     if (provisioningTarget) return
     setProvisioningTarget(representative.user_id)
     try {
-      await provisionAccountAccess(representative.email)
+      const result = await provisionAccountAccess(representative.email, { userId: representative.user_id })
+      if (result) await refreshRepresentativeSecurity()
+    } catch (error) {
+      setProvisioningNotice(error instanceof Error ? error.message : 'Nao foi possivel definir a senha de acesso.')
     } finally {
       setProvisioningTarget('')
     }
@@ -2022,7 +2143,7 @@ function App() {
       const result = await provisionAccountAccess(invite.invited_email, { inviteToken: invite.token })
       if (!result) return
       if (!result.inviteFinalized) {
-        alert(result.inviteError || 'Senha criada, mas não foi possível concluir o vínculo do convite.')
+        setProvisioningNotice(result.inviteError || 'Senha criada, mas nao foi possivel concluir o vinculo do convite.')
       }
       const [representativesResult, invitesResult] = await Promise.all([
         supabase.from('platform_representatives').select('*').order('created_at', { ascending: false }),
@@ -2030,6 +2151,8 @@ function App() {
       ])
       setRepresentatives(representativesResult.data || [])
       setRepresentativeInvites(invitesResult.data || [])
+    } catch (error) {
+      setProvisioningNotice(error instanceof Error ? error.message : 'Nao foi possivel criar o acesso direto.')
     } finally {
       setProvisioningTarget('')
     }
@@ -2574,7 +2697,7 @@ function App() {
             </div>
           )}
 
-          {publicEntryType === 'loja' && (
+          {(publicEntryType === 'loja' || (publicEntryType === 'agendar' && (activeProvider.highlights.length > 0 || publicGeneralPhotos.length > 0))) && (
             <div className="panel storeFront">
               {activeProvider.highlights.length > 0 && (
                 <div className="chips">
@@ -2591,31 +2714,33 @@ function App() {
                   ))}
                 </div>
               )}
-              <div className="providerList">
-                {filteredServices.map((item) => {
-                  const servicePhoto = publicPhotos.find((photo) => photo.serviceId === item.id)
-                  return (
-                    <button
-                      className="provider serviceCardPublic"
-                      key={item.id}
-                      onClick={() => {
-                        trackAnalyticsEvent('visualizou_servico', item)
-                        trackAnalyticsEvent('iniciou_agendamento', item)
-                        setBookingForm({ ...bookingForm, serviceId: item.id, resourceId: '' })
-                        setSuccessMessage('')
-                        window.location.hash = `agendar=${item.provider.slug || item.provider.id}`
-                        setPublicEntryType('agendar')
-                      }}
-                    >
-                      {servicePhoto && <img src={servicePhoto.imageBase64} alt="" />}
-                      <strong>{item.name}</strong>
-                      <span>{item.description || item.provider.category}</span>
-                      <small>{formatServiceDuration(item)} • {formatServicePrice(item, item.provider.showPrices)}</small>
-                    </button>
-                  )
-                })}
-                {filteredServices.length === 0 && <span className="emptyState">Nenhum serviço encontrado.</span>}
-              </div>
+              {publicEntryType === 'loja' && (
+                <div className="providerList">
+                  {filteredServices.map((item) => {
+                    const servicePhoto = publicPhotos.find((photo) => photo.serviceId === item.id)
+                    return (
+                      <button
+                        className="provider serviceCardPublic"
+                        key={item.id}
+                        onClick={() => {
+                          trackAnalyticsEvent('visualizou_servico', item)
+                          trackAnalyticsEvent('iniciou_agendamento', item)
+                          setBookingForm({ ...bookingForm, serviceId: item.id, resourceId: '' })
+                          setSuccessMessage('')
+                          window.location.hash = `agendar=${item.provider.slug || item.provider.id}`
+                          setPublicEntryType('agendar')
+                        }}
+                      >
+                        {servicePhoto && <img src={servicePhoto.imageBase64} alt="" />}
+                        <strong>{item.name}</strong>
+                        <span>{item.description || item.provider.category}</span>
+                        <small>{formatServiceDuration(item)} • {formatServicePrice(item, item.provider.showPrices)}</small>
+                      </button>
+                    )
+                  })}
+                  {filteredServices.length === 0 && <span className="emptyState">Nenhum serviço encontrado.</span>}
+                </div>
+              )}
             </div>
           )}
 
@@ -2628,25 +2753,29 @@ function App() {
                 </div>
               </div>
               <div className="providerList">
-                {filteredServices.map((item) => (
-                  <button
-                    className={bookingForm.serviceId === item.id ? 'provider selected' : 'provider'}
-                    key={item.id}
-                    onClick={() => { trackAnalyticsEvent('visualizou_servico', item); trackAnalyticsEvent('iniciou_agendamento', item); setBookingForm({ ...bookingForm, serviceId: item.id, resourceId: '' }); setSuccessMessage('') }}
-                  >
-                    <strong>{item.name}</strong>
-                    <span>{item.description || activeProvider.category}</span>
-                    <small>{formatServiceDuration(item)} • {formatServicePrice(item, item.provider.showPrices)}</small>
-                    <label className="checkLabel cartCheck" onClick={(event) => event.stopPropagation()}>
-                      <input
-                        type="checkbox"
-                        checked={bookingForm.cartServiceIds.includes(item.id)}
-                        onChange={() => toggleCartService(item.id)}
-                      />
-                      Também tenho interesse
-                    </label>
-                  </button>
-                ))}
+                {filteredServices.map((item) => {
+                  const servicePhoto = publicPhotos.find((photo) => photo.serviceId === item.id)
+                  return (
+                    <button
+                      className={bookingForm.serviceId === item.id ? 'provider selected serviceCardPublic' : 'provider serviceCardPublic'}
+                      key={item.id}
+                      onClick={() => { trackAnalyticsEvent('visualizou_servico', item); trackAnalyticsEvent('iniciou_agendamento', item); setBookingForm({ ...bookingForm, serviceId: item.id, resourceId: '' }); setSuccessMessage('') }}
+                    >
+                      {servicePhoto && <img src={servicePhoto.imageBase64} alt="" />}
+                      <strong>{item.name}</strong>
+                      <span>{item.description || activeProvider.category}</span>
+                      <small>{formatServiceDuration(item)} • {formatServicePrice(item, item.provider.showPrices)}</small>
+                      <label className="checkLabel cartCheck" onClick={(event) => event.stopPropagation()}>
+                        <input
+                          type="checkbox"
+                          checked={bookingForm.cartServiceIds.includes(item.id)}
+                          onChange={() => toggleCartService(item.id)}
+                        />
+                        Também tenho interesse
+                      </label>
+                    </button>
+                  )
+                })}
                 {filteredServices.length === 0 && <span className="emptyState">Nenhum serviço encontrado.</span>}
               </div>
             </div>
@@ -3138,11 +3267,13 @@ function App() {
             )}
 
 
-            {publicEntryType === 'loja' && bookingService && (
+            {(publicEntryType === 'loja' || (publicEntryType === 'agendar' && (bookingService.provider.highlights.length > 0 || publicGeneralPhotos.length > 0))) && bookingService && (
               <div className="panel storeFront">
-                <div className="chips">
-                  {bookingService.provider.highlights.map((highlight) => <span key={highlight}>{highlight}</span>)}
-                </div>
+                {bookingService.provider.highlights.length > 0 && (
+                  <div className="chips">
+                    {bookingService.provider.highlights.map((highlight) => <span key={highlight}>{highlight}</span>)}
+                  </div>
+                )}
                 {publicGeneralPhotos.length > 0 && (
                   <div className="publicGallery">
                     {publicGeneralPhotos.map((photo) => (
@@ -3153,31 +3284,33 @@ function App() {
                     ))}
                   </div>
                 )}
-                <div className="providerList">
-                  {filteredServices.map((item) => {
-                    const servicePhoto = publicPhotos.find((photo) => photo.serviceId === item.id)
-                    return (
-                      <button
-                        className="provider serviceCardPublic"
-                        key={item.id}
-                        onClick={() => {
-                          trackAnalyticsEvent('visualizou_servico', item)
-                          trackAnalyticsEvent('iniciou_agendamento', item)
-                          setBookingForm({ ...bookingForm, serviceId: item.id, resourceId: '' })
-                          setSuccessMessage('')
-                          window.location.hash = `agendar=${item.provider.slug || item.provider.id}`
-                          setPublicEntryType('agendar')
-                        }}
-                      >
-                        {servicePhoto && <img src={servicePhoto.imageBase64} alt="" />}
-                        <strong>{item.name}</strong>
-                        <span>{item.description || item.provider.category}</span>
-                        <small>{formatServiceDuration(item)} • {formatServicePrice(item, item.provider.showPrices)}</small>
-                      </button>
-                    )
-                  })}
-                  {filteredServices.length === 0 && <span className="emptyState">Nenhum serviço encontrado.</span>}
-                </div>
+                {publicEntryType === 'loja' && (
+                  <div className="providerList">
+                    {filteredServices.map((item) => {
+                      const servicePhoto = publicPhotos.find((photo) => photo.serviceId === item.id)
+                      return (
+                        <button
+                          className="provider serviceCardPublic"
+                          key={item.id}
+                          onClick={() => {
+                            trackAnalyticsEvent('visualizou_servico', item)
+                            trackAnalyticsEvent('iniciou_agendamento', item)
+                            setBookingForm({ ...bookingForm, serviceId: item.id, resourceId: '' })
+                            setSuccessMessage('')
+                            window.location.hash = `agendar=${item.provider.slug || item.provider.id}`
+                            setPublicEntryType('agendar')
+                          }}
+                        >
+                          {servicePhoto && <img src={servicePhoto.imageBase64} alt="" />}
+                          <strong>{item.name}</strong>
+                          <span>{item.description || item.provider.category}</span>
+                          <small>{formatServiceDuration(item)} • {formatServicePrice(item, item.provider.showPrices)}</small>
+                        </button>
+                      )
+                    })}
+                    {filteredServices.length === 0 && <span className="emptyState">Nenhum serviço encontrado.</span>}
+                  </div>
+                )}
               </div>
             )}
             {publicEntryType === 'agendar' && <div className="panel">
@@ -3195,25 +3328,29 @@ function App() {
               </div>
 
               <div className="providerList">
-                {filteredServices.map((item) => (
-                  <button
-                    className={bookingForm.serviceId === item.id ? 'provider selected' : 'provider'}
-                    key={item.id}
-                    onClick={() => { trackAnalyticsEvent('visualizou_servico', item); trackAnalyticsEvent('iniciou_agendamento', item); setBookingForm({ ...bookingForm, serviceId: item.id, resourceId: '' }); setSuccessMessage('') }}
-                  >
-                    <strong>{item.name}</strong>
-                    <span>{item.provider.name} • {item.provider.category} • {item.provider.city}</span>
-                        <small>{formatServiceDuration(item)} • {formatServicePrice(item, item.provider.showPrices)}</small>
-                    <label className="checkLabel cartCheck" onClick={(event) => event.stopPropagation()}>
-                      <input
-                        type="checkbox"
-                        checked={bookingForm.cartServiceIds.includes(item.id)}
-                        onChange={() => toggleCartService(item.id)}
-                      />
-                      Também tenho interesse
-                    </label>
-                  </button>
-                ))}
+                {filteredServices.map((item) => {
+                  const servicePhoto = publicPhotos.find((photo) => photo.serviceId === item.id)
+                  return (
+                    <button
+                      className={bookingForm.serviceId === item.id ? 'provider selected serviceCardPublic' : 'provider serviceCardPublic'}
+                      key={item.id}
+                      onClick={() => { trackAnalyticsEvent('visualizou_servico', item); trackAnalyticsEvent('iniciou_agendamento', item); setBookingForm({ ...bookingForm, serviceId: item.id, resourceId: '' }); setSuccessMessage('') }}
+                    >
+                      {servicePhoto && <img src={servicePhoto.imageBase64} alt="" />}
+                      <strong>{item.name}</strong>
+                      <span>{item.provider.name} • {item.provider.category} • {item.provider.city}</span>
+                          <small>{formatServiceDuration(item)} • {formatServicePrice(item, item.provider.showPrices)}</small>
+                      <label className="checkLabel cartCheck" onClick={(event) => event.stopPropagation()}>
+                        <input
+                          type="checkbox"
+                          checked={bookingForm.cartServiceIds.includes(item.id)}
+                          onChange={() => toggleCartService(item.id)}
+                        />
+                        Também tenho interesse
+                      </label>
+                    </button>
+                  )
+                })}
                 {filteredServices.length === 0 && <span className="emptyState">Nenhum serviço encontrado.</span>}
               </div>
             </div>}
@@ -3924,6 +4061,7 @@ function App() {
                   </div>
                   <div className="managementActions">
                     <button type="button" onClick={() => setAdminTab('prestadores')}><span><strong>Prestadores aguardando análise</strong><small>Revise e libere novos cadastros</small></span><strong>{data.providers.filter((item) => item.approvalStatus === 'analise').length}</strong></button>
+                    <button type="button" onClick={() => setAdminTab('prestadores')}><span><strong>Prestadores sem acesso</strong><small>Crie ou vincule a conta antes da homologação final</small></span><strong>{activeProvidersWithoutAccess}</strong></button>
                     <button type="button" onClick={() => setAdminTab('privacidade')}><span><strong>Solicitações de privacidade</strong><small>Acompanhe pedidos ainda abertos</small></span><strong>{openPrivacyRequests}</strong></button>
                     <button type="button" onClick={() => setAdminTab('convites')}><span><strong>Convidar novo prestador</strong><small>Gere um acesso controlado</small></span><Plus size={20} /></button>
                   </div>
@@ -4297,6 +4435,19 @@ function App() {
                   <button type="button" className="secondaryAction" onClick={() => setPasswordProvisionNotice(null)}>Fechar</button>
                 </div>
               </div>}
+              {provisioningNotice && <div className="requestRow danger" role="alert">
+                <div><strong>Acesso não concluído</strong><span>{provisioningNotice}</span></div>
+                <div className="shareActions">
+                  <button type="button" className="secondaryAction" onClick={() => setProvisioningNotice('')}>Fechar</button>
+                </div>
+              </div>}
+              {provisioningDebug && <div className="requestRow muted" role="status">
+                <div>
+                  <strong>Última tentativa</strong>
+                  <span>{provisioningDebug.at} • {provisioningDebug.status} • {provisioningDebug.target}</span>
+                  <span>{provisioningDebug.detail}</span>
+                </div>
+              </div>}
               <div className="providerRows">
                 {representatives.map((representative) => {
                   const security = representativeSecurity[representative.user_id]
@@ -4305,10 +4456,11 @@ function App() {
                     : security && !security.lastSignInAt
                       ? 'nunca acessou'
                       : ''
+                  const passwordActionLabel = security && security.lastSignInAt && !security.mustChangePassword ? 'Redefinir senha' : 'Definir senha'
                   return <article className="providerRow" key={representative.user_id}>
                   <div><strong>{representative.email}</strong><span>Representante • {representative.status}{securityHint ? ` • ${securityHint}` : ''}</span></div>
                   <div className="shareActions">
-                    <button type="button" className="secondaryAction" disabled={Boolean(provisioningTarget)} onClick={() => resetRepresentativePassword(representative)}>{provisioningTarget === representative.user_id ? 'Salvando...' : 'Definir senha'}</button>
+                    <button type="button" className="secondaryAction" disabled={Boolean(provisioningTarget)} onClick={() => resetRepresentativePassword(representative)}>{provisioningTarget === representative.user_id ? 'Salvando...' : passwordActionLabel}</button>
                     <button type="button" className={representative.status === 'ativo' ? 'toggle on' : 'toggle'} onClick={() => changeRepresentativeStatus(representative)}>
                       {representative.status === 'ativo' ? 'Ativo' : 'Suspenso'}
                     </button>
