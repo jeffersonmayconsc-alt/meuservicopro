@@ -1392,6 +1392,10 @@ label {
   font-weight: 800;
 }
 
+.compactButton {
+  justify-self: start;
+}
+
 .publicGallery,
 .photoStrip {
   display: grid;

@@ -3750,7 +3750,7 @@ function App() {
                           </label>
                           <div className="serviceActions">
                             <button type="button" onClick={() => updateProviderResource(resource.id, 'active', !resource.active)}>{resource.active ? 'Pausar' : 'Ativar'}</button>
-                            <button className="dangerButton" type="button" onClick={() => removeProviderResource(resource.id)}><Trash2 size={16} /> Remover</button>
+                            <button className="dangerButton" type="button" title="Remover" aria-label="Remover" onClick={() => removeProviderResource(resource.id)}><Trash2 size={16} /></button>
                           </div>
                         </article>
                       ))}
@@ -3913,10 +3913,10 @@ function App() {
                             <textarea value={service.description} onChange={(event) => updateProviderService(service.id, 'description', event.target.value)} />
                           </label>
                           <div className="serviceActions">
-                            <button type="button" onClick={() => moveProviderService(service.id, -1)}><ArrowUp size={16} /> Subir</button>
-                            <button type="button" onClick={() => moveProviderService(service.id, 1)}><ArrowDown size={16} /> Descer</button>
+                            <button type="button" title="Mover para cima" aria-label="Mover para cima" onClick={() => moveProviderService(service.id, -1)}><ArrowUp size={16} /></button>
+                            <button type="button" title="Mover para baixo" aria-label="Mover para baixo" onClick={() => moveProviderService(service.id, 1)}><ArrowDown size={16} /></button>
                             <button type="button" onClick={() => updateProviderService(service.id, 'active', !service.active)}>{service.active ? 'Pausar' : 'Ativar'}</button>
-                            <button className="dangerButton" type="button" onClick={() => removeProviderService(service.id)}><Trash2 size={16} /> Remover</button>
+                            <button className="dangerButton" type="button" title="Remover" aria-label="Remover" onClick={() => removeProviderService(service.id)}><Trash2 size={16} /></button>
                           </div>
                           <div className="photoStrip">
                             {servicePhotos.map((photo) => (
