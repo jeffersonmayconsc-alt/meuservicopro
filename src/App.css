@@ -1706,6 +1706,19 @@ label {
   font-weight: 800;
 }
 
+.requestRow.danger {
+  border-color: #7f1d1d;
+}
+
+.requestRow.danger strong,
+.requestRow.danger span {
+  color: #fecaca;
+}
+
+.requestRow.muted {
+  opacity: .82;
+}
+
 .shareBox {
   margin: 16px 0;
   display: flex;
@@ -1805,6 +1818,28 @@ label {
   background: #ffffff;
   color: #991b1b;
   font-weight: 800;
+}
+
+.logoUploader input[type='file'] {
+  font-size: 0.85rem;
+  color: var(--text-soft);
+}
+
+.logoUploader input[type='file']::file-selector-button {
+  margin-right: 10px;
+  min-height: 36px;
+  padding: 0 14px;
+  border: 0;
+  border-radius: 6px;
+  background: var(--accent);
+  color: #ffffff;
+  font-weight: 700;
+  font-size: 0.85rem;
+  cursor: pointer;
+}
+
+.logoUploader input[type='file']::file-selector-button:hover {
+  filter: brightness(0.94);
 }
 
 .saveRow {
