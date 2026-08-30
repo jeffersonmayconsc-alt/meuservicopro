@@ -6,6 +6,7 @@ import {
   CalendarCheck,
   CalendarDays,
   CheckCircle2,
+  ChevronLeft,
   ChevronRight,
   Clock3,
   Eye,
@@ -582,6 +583,11 @@ function App() {
   const [adminTab, setAdminTab] = useState('visao-geral')
   const [agendaFilter, setAgendaFilter] = useState('todos')
   const [agendaDate, setAgendaDate] = useState(new Date().toISOString().slice(0, 10))
+  const shiftAgendaDate = (deltaDays) => {
+    const next = new Date(`${agendaDate}T00:00:00`)
+    next.setDate(next.getDate() + deltaDays)
+    setAgendaDate(next.toISOString().slice(0, 10))
+  }
   const [clientFilter, setClientFilter] = useState('todos')
   const [clientSearch, setClientSearch] = useState('')
   const [successMessage, setSuccessMessage] = useState('')
@@ -3783,7 +3789,14 @@ function App() {
                       <span className="sectionSub">Ocupação do dia: {occupancyRate}% • {occupiedSlots}/{times.length} horários usados</span>
                     </div>
                     <div className="agendaTools">
-                      <input type="date" value={agendaDate} onChange={(event) => setAgendaDate(event.target.value)} />
+                      <div className="agendaDateNav">
+                        <button type="button" onClick={() => shiftAgendaDate(-1)} title="Dia anterior" aria-label="Dia anterior"><ChevronLeft size={16} /></button>
+                        <input type="date" value={agendaDate} onChange={(event) => setAgendaDate(event.target.value)} />
+                        <button type="button" onClick={() => shiftAgendaDate(1)} title="Próximo dia" aria-label="Próximo dia"><ChevronRight size={16} /></button>
+                        {agendaDate !== new Date().toISOString().slice(0, 10) && (
+                          <button type="button" className="secondaryAction" onClick={() => setAgendaDate(new Date().toISOString().slice(0, 10))}>Hoje</button>
+                        )}
+                      </div>
                       {providerResources.length > 0 && (
                         <label className="compactSelect">
                           <Users size={16} />
@@ -3816,6 +3829,12 @@ function App() {
                           <>
                             <span>{slot.booking.client}</span>
                             <small>{bookingServiceName(slot.booking)} • {slot.booking.status}</small>
+                            {slot.booking.status === 'pendente' && (
+                              <button type="button" onClick={() => updateBookingStatus(slot.booking.id, 'confirmado')}>Confirmar</button>
+                            )}
+                            {slot.booking.status === 'confirmado' && (
+                              <button type="button" onClick={() => updateBookingStatus(slot.booking.id, 'concluido')}>Concluir</button>
+                            )}
                           </>
                         )}
                         {slot.block && (

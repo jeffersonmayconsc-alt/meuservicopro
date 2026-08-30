@@ -1970,6 +1970,30 @@ label {
   width: 170px;
 }
 
+.agendaDateNav {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.agendaDateNav button:not(.secondaryAction) {
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border: 1px solid var(--border-strong);
+  border-radius: 6px;
+  background: var(--surface);
+  color: var(--text-soft);
+  display: grid;
+  place-items: center;
+  flex: 0 0 auto;
+}
+
+.agendaDateNav button:not(.secondaryAction):hover {
+  color: var(--text);
+  border-color: var(--accent);
+}
+
 .scheduleBoard {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
