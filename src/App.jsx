@@ -570,6 +570,7 @@ function App() {
   const [providerTab, setProviderTab] = useState('agenda')
   const [analyticsDays, setAnalyticsDays] = useState(30)
   const [providerProfileTab, setProviderProfileTab] = useState('identidade')
+  const [performanceSubTab, setPerformanceSubTab] = useState('operacao')
   const [expandedNavGroup, setExpandedNavGroup] = useState('admin')
   const [sidebarCollapsed, setSidebarCollapsed] = useState(() => {
     try {
@@ -1101,8 +1102,6 @@ function App() {
   const maxBookingDateBase = new Date(`${today}T00:00:00`)
   maxBookingDateBase.setDate(maxBookingDateBase.getDate() + (data?.settings.maxAdvanceDays || 0))
   const maxBookingDate = maxBookingDateBase.toISOString().slice(0, 10)
-  const todayBookings = providerBookings.filter((booking) => booking.date === today && booking.status !== 'cancelado').length
-  const pendingBookings = providerBookings.filter((booking) => booking.status === 'pendente').length
   const completedBookings = providerBookings.filter((booking) => booking.status === 'concluido').length
   const revenueBookings = providerBookings.filter((booking) => booking.status !== 'cancelado')
   const providerRevenue = revenueBookings.reduce((total, booking) => {
@@ -3089,16 +3088,10 @@ function App() {
                 Clientes
               </button>
               <button
-                className={view === 'prestador' && providerTab === 'insights' ? 'active' : ''}
-                onClick={() => { setView('prestador'); setProviderTab('insights') }}
-              >
-                Resumo operacional
-              </button>
-              <button
                 className={view === 'prestador' && providerTab === 'desempenho' ? 'active' : ''}
                 onClick={() => { setView('prestador'); setProviderTab('desempenho') }}
               >
-                Desempenho da loja
+                Desempenho
               </button>
               <button
                 className={view === 'prestador' && providerTab === 'loja' ? 'active' : ''}
@@ -3123,11 +3116,8 @@ function App() {
             <button className={providerTab === 'clientes' ? 'active' : ''} onClick={() => setProviderTab('clientes')}>
               <Users size={18} /> Clientes
             </button>
-            <button className={providerTab === 'insights' ? 'active' : ''} onClick={() => setProviderTab('insights')}>
-              <LayoutDashboard size={18} /> Resumo
-            </button>
             <button className={providerTab === 'desempenho' ? 'active' : ''} onClick={() => setProviderTab('desempenho')}>
-              <TrendingUp size={18} /> Desempenho da loja
+              <TrendingUp size={18} /> Desempenho
             </button>
             <button className={providerTab === 'loja' ? 'active' : ''} onClick={() => setProviderTab('loja')}>
               <Store size={18} /> Minha loja
@@ -3510,64 +3500,6 @@ function App() {
 
               {providerTab === 'loja' && (
               <>
-              <div className="metricGrid">
-                <Stat label="Hoje" value={todayBookings} icon={<CalendarDays />} />
-                <Stat label="Pendentes" value={pendingBookings} icon={<AlertCircle />} />
-                <Stat label="Clientes" value={providerClients.length} icon={<Users />} />
-              </div>
-
-              <div className="shareBox">
-                <div>
-                  <strong>Link de convite de cliente</strong>
-                  <span>{getInviteLink(provider)}</span>
-                </div>
-                <div className="shareActions">
-                  {data.settings.allowWhatsAppShare && (
-                    <button onClick={() => shareProviderLink(provider)}>
-                      Compartilhar
-                    </button>
-                  )}
-                  <button
-                    className="secondaryAction"
-                    onClick={() => navigator.clipboard.writeText(getInviteLink(provider))}
-                  >
-                    Copiar link
-                  </button>
-                </div>
-              </div>
-
-              <form className="shareBox" onSubmit={createClientInvite}>
-                <div>
-                  <strong>Novo convite de cliente</strong>
-                  <input
-                    placeholder="E-mail ou WhatsApp do cliente"
-                    value={clientInviteForm.contact}
-                    onChange={(event) => setClientInviteForm({ contact: event.target.value })}
-                  />
-                  {clientInviteNotice && <span>{clientInviteNotice}</span>}
-                </div>
-                <div className="shareActions">
-                  <button type="submit">Gerar link</button>
-                  {clientInviteNotice && (
-                    <button type="button" className="secondaryAction" onClick={() => navigator.clipboard.writeText(clientInviteNotice)}>
-                      Copiar
-                    </button>
-                  )}
-                </div>
-              </form>
-
-              <div className="shareBox">
-                <div>
-                  <strong>Link da loja</strong>
-                  <span>{getStoreLink(provider)}</span>
-                </div>
-                <div className="shareActions">
-                  <button onClick={() => navigator.clipboard.writeText(getStoreLink(provider))}>
-                    Copiar loja
-                  </button>
-                </div>
-              </div>
-
               <div className="inviteEditor">
                 {hasUnsavedChanges && (
                   <div className="unsavedBanner">
@@ -3587,7 +3519,7 @@ function App() {
                   <>
                     <div>
                       <p className="eyebrow">Identidade</p>
-                      <h3>Dados do negócio</h3>
+                      <h3>Marca e dados do negócio</h3>
                     </div>
                     <div className="inlineFields">
                       <label>Nome do negócio
@@ -3603,19 +3535,49 @@ function App() {
                         />
                       </label>
                     </div>
-                    <label className="checkLabel">
-                      <input
-                        type="checkbox"
-                        checked={inviteDraft.showPrices}
-                        onChange={(event) => updateInviteDraft(provider.id, 'showPrices', event.target.checked)}
-                      />
-                      Mostrar preços dos serviços na vitrine pública
-                    </label>
-                    {!inviteDraft.showPrices && (
-                      <p className="privacyHint">
-                        Com isso desativado, todo serviço aparece como "Sob consulta" pro cliente, mesmo os que têm preço fixo cadastrado — os preços continuam salvos, só não ficam visíveis publicamente.
-                      </p>
-                    )}
+                    <div className="logoUploader">
+                      <div className="logoPreview">
+                        {inviteDraft.logoUrl ? <img src={inviteDraft.logoUrl} alt="" /> : <Store size={26} />}
+                      </div>
+                      <label>Logo ou imagem da loja
+                        <input
+                          accept="image/*"
+                          type="file"
+                          onChange={(event) => uploadProviderLogo(provider.id, event.target.files?.[0])}
+                        />
+                      </label>
+                      {inviteDraft.logoUrl && (
+                        <button type="button" onClick={() => updateInviteDraft(provider.id, 'logoUrl', '')}>
+                          Remover imagem
+                        </button>
+                      )}
+                    </div>
+                    <div className="themeEditor">
+                      <label>Cor principal
+                        <input
+                          type="color"
+                          value={inviteDraft.theme?.accent || data.brand.accent}
+                          onChange={(event) => updateThemeDraft(provider.id, 'accent', event.target.value)}
+                        />
+                      </label>
+                      <label>Cor de fundo
+                        <input
+                          type="color"
+                          value={inviteDraft.theme?.background || '#111827'}
+                          onChange={(event) => updateThemeDraft(provider.id, 'background', event.target.value)}
+                        />
+                      </label>
+                      <label>Estilo
+                        <select
+                          value={inviteDraft.theme?.style || 'profissional'}
+                          onChange={(event) => updateThemeDraft(provider.id, 'style', event.target.value)}
+                        >
+                          <option value="profissional">Profissional</option>
+                          <option value="acolhedor">Acolhedor</option>
+                          <option value="premium">Premium</option>
+                        </select>
+                      </label>
+                    </div>
                   </>
                 )}
 
@@ -3664,32 +3626,82 @@ function App() {
                         <button type="submit">Adicionar</button>
                       </form>
                     </div>
+
+                    <label className="checkLabel">
+                      <input
+                        type="checkbox"
+                        checked={inviteDraft.showPrices}
+                        onChange={(event) => updateInviteDraft(provider.id, 'showPrices', event.target.checked)}
+                      />
+                      Mostrar preços dos serviços na vitrine pública
+                    </label>
+                    {!inviteDraft.showPrices && (
+                      <p className="privacyHint">
+                        Com isso desativado, todo serviço aparece como "Sob consulta" pro cliente, mesmo os que têm preço fixo cadastrado — os preços continuam salvos, só não ficam visíveis publicamente.
+                      </p>
+                    )}
+
+                    <div className="shareBox">
+                      <div>
+                        <strong>Link da loja</strong>
+                        <span>{getStoreLink(provider)}</span>
+                      </div>
+                      <div className="shareActions">
+                        <button onClick={() => navigator.clipboard.writeText(getStoreLink(provider))}>
+                          Copiar loja
+                        </button>
+                      </div>
+                    </div>
                   </>
                 )}
 
                 {providerProfileTab === 'convite' && (
                   <>
                     <div>
-                      <p className="eyebrow">Página do convite</p>
-                      <h3>Mensagem para o cliente</h3>
+                      <p className="eyebrow">Convite direto</p>
+                      <h3>Convide um cliente pra agendar com você</h3>
                     </div>
-                    <div className="logoUploader">
-                      <div className="logoPreview">
-                        {inviteDraft.logoUrl ? <img src={inviteDraft.logoUrl} alt="" /> : <Store size={26} />}
+
+                    <div className="shareBox">
+                      <div>
+                        <strong>Link de convite de cliente</strong>
+                        <span>{getInviteLink(provider)}</span>
                       </div>
-                      <label>Logo ou imagem da loja
-                        <input
-                          accept="image/*"
-                          type="file"
-                          onChange={(event) => uploadProviderLogo(provider.id, event.target.files?.[0])}
-                        />
-                      </label>
-                      {inviteDraft.logoUrl && (
-                        <button type="button" onClick={() => updateInviteDraft(provider.id, 'logoUrl', '')}>
-                          Remover imagem
+                      <div className="shareActions">
+                        {data.settings.allowWhatsAppShare && (
+                          <button onClick={() => shareProviderLink(provider)}>
+                            Compartilhar
+                          </button>
+                        )}
+                        <button
+                          className="secondaryAction"
+                          onClick={() => navigator.clipboard.writeText(getInviteLink(provider))}
+                        >
+                          Copiar link
                         </button>
-                      )}
+                      </div>
                     </div>
+
+                    <form className="shareBox" onSubmit={createClientInvite}>
+                      <div>
+                        <strong>Novo convite de cliente</strong>
+                        <input
+                          placeholder="E-mail ou WhatsApp do cliente"
+                          value={clientInviteForm.contact}
+                          onChange={(event) => setClientInviteForm({ contact: event.target.value })}
+                        />
+                        {clientInviteNotice && <span>{clientInviteNotice}</span>}
+                      </div>
+                      <div className="shareActions">
+                        <button type="submit">Gerar link</button>
+                        {clientInviteNotice && (
+                          <button type="button" className="secondaryAction" onClick={() => navigator.clipboard.writeText(clientInviteNotice)}>
+                            Copiar
+                          </button>
+                        )}
+                      </div>
+                    </form>
+
                     <label>Título do convite
                       <input
                         value={inviteDraft.inviteTitle}
@@ -3708,32 +3720,6 @@ function App() {
                         onChange={(event) => updateInviteDraft(provider.id, 'firstOffer', event.target.value)}
                       />
                     </label>
-                    <div className="themeEditor">
-                      <label>Cor principal
-                        <input
-                          type="color"
-                          value={inviteDraft.theme?.accent || data.brand.accent}
-                          onChange={(event) => updateThemeDraft(provider.id, 'accent', event.target.value)}
-                        />
-                      </label>
-                      <label>Cor de fundo
-                        <input
-                          type="color"
-                          value={inviteDraft.theme?.background || '#111827'}
-                          onChange={(event) => updateThemeDraft(provider.id, 'background', event.target.value)}
-                        />
-                      </label>
-                      <label>Estilo
-                        <select
-                          value={inviteDraft.theme?.style || 'profissional'}
-                          onChange={(event) => updateThemeDraft(provider.id, 'style', event.target.value)}
-                        >
-                          <option value="profissional">Profissional</option>
-                          <option value="acolhedor">Acolhedor</option>
-                          <option value="premium">Premium</option>
-                        </select>
-                      </label>
-                    </div>
                   </>
                 )}
 
@@ -4018,28 +4004,35 @@ function App() {
                 </div>
               )}
 
-              {providerTab === 'insights' && (
-                <OperationalSummary
-                  clientsWithoutReturn={clientsWithoutReturn}
-                  completedBookings={completedBookings}
-                  currency={currency}
-                  providerConsultationBookings={providerConsultationBookings}
-                  providerRevenue={providerRevenue}
-                />
-              )}
-
               {providerTab === 'desempenho' && (
-                <StorePerformance
-                  analyticsDays={analyticsDays}
-                  bookingStarts={bookingStarts}
-                  funnelConversion={funnelConversion}
-                  generatedBookings={generatedBookings}
-                  providerServiceAnalytics={providerServiceAnalytics}
-                  serviceViews={serviceViews}
-                  setAnalyticsDays={setAnalyticsDays}
-                  startConversion={startConversion}
-                  uniqueVisitors={uniqueVisitors}
-                />
+                <div className="providerSection">
+                  <div className="profileTabs" role="tablist" aria-label="Seções de desempenho">
+                    <button type="button" className={performanceSubTab === 'operacao' ? 'active' : ''} onClick={() => setPerformanceSubTab('operacao')}>Operação</button>
+                    <button type="button" className={performanceSubTab === 'aquisicao' ? 'active' : ''} onClick={() => setPerformanceSubTab('aquisicao')}>Aquisição</button>
+                  </div>
+                  {performanceSubTab === 'operacao' && (
+                    <OperationalSummary
+                      clientsWithoutReturn={clientsWithoutReturn}
+                      completedBookings={completedBookings}
+                      currency={currency}
+                      providerConsultationBookings={providerConsultationBookings}
+                      providerRevenue={providerRevenue}
+                    />
+                  )}
+                  {performanceSubTab === 'aquisicao' && (
+                    <StorePerformance
+                      analyticsDays={analyticsDays}
+                      bookingStarts={bookingStarts}
+                      funnelConversion={funnelConversion}
+                      generatedBookings={generatedBookings}
+                      providerServiceAnalytics={providerServiceAnalytics}
+                      serviceViews={serviceViews}
+                      setAnalyticsDays={setAnalyticsDays}
+                      startConversion={startConversion}
+                      uniqueVisitors={uniqueVisitors}
+                    />
+                  )}
+                </div>
               )}
             </div>
           </section>
