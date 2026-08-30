@@ -672,6 +672,7 @@ function App() {
     }
   }, [data?.brand?.logoUrl])
 
+  const hasData = Boolean(data)
   useEffect(() => {
     if (!data || getInviteToken('prestador') || getInviteToken('cliente') || getLinkedProviderId()) return undefined
 
@@ -711,7 +712,7 @@ function App() {
       active = false
       listener.subscription.unsubscribe()
     }
-  }, [data])
+  }, [hasData])
 
   useEffect(() => {
     if (!session?.isMasterAdmin) return
