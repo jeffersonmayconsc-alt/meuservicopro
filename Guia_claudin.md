@@ -52,6 +52,10 @@ Uma pessoa poderá acumular papéis. O administrador também poderá atuar como 
 
 ## 3. Tecnologias
 
+### PWA
+
+O frontend possui manifest e service worker em `public/`. Em produção HTTPS, navegadores compatíveis podem instalar o Meu Servico Online como aplicativo. O cache cobre o shell estatico e usa a rede primeiro; dados, autenticacao e operacoes do Supabase continuam dependendo de conexao para manter consistencia.
+
 | Camada | Tecnologia | Finalidade |
 | --- | --- | --- |
 | Frontend | React 19 | Componentes e estados da interface |
