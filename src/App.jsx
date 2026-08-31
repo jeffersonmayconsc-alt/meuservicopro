@@ -752,8 +752,8 @@ function App() {
       }
       manifest.href = `data:application/manifest+json,${encodeURIComponent(JSON.stringify(manifestData))}`
     } else {
-      link.href = '/favicon.svg'
-      link.type = 'image/svg+xml'
+      link.href = '/brand-icon.png?v=1'
+      link.type = 'image/png'
       manifest.href = '/manifest.webmanifest'
     }
   }, [data?.brand?.logoUrl, data?.brand?.name])
