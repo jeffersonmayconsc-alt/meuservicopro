@@ -26,6 +26,7 @@ import {
   Search,
   Settings,
   ShieldCheck,
+  ShoppingCart,
   Store,
   Sun,
   Trash2,
@@ -75,6 +76,17 @@ const BRAND_COLUMN_MAP = {
   privacyEmail: 'brand_privacy_email',
 }
 
+const SERVICE_MODE_OPTIONS = [
+  ['presencial_online', 'Presencial e online'],
+  ['presencial', 'Somente presencial'],
+  ['online', 'Somente online'],
+]
+
+const LANDING_STATUS_OPTIONS = [
+  ['rascunho', 'Rascunho'],
+  ['publicado', 'Publicado'],
+]
+
 function slugify(value) {
   return value
     .normalize('NFD')
@@ -86,6 +98,36 @@ function slugify(value) {
 
 function providerPublicSlug(provider) {
   return `${slugify(provider.name)}-${provider.id.slice(0, 8)}`
+}
+
+function upsertMetaTag(selector, attributes) {
+  let element = document.head.querySelector(selector)
+  if (!element) {
+    element = document.createElement('meta')
+    document.head.appendChild(element)
+  }
+  Object.entries(attributes).forEach(([key, value]) => element.setAttribute(key, value))
+}
+
+function normalizePhotoUrl(photo) {
+  if (!photo) return ''
+  if (typeof photo === 'string') return photo
+  return photo.url || photo.photoUrl || photo.imageUrl || photo.imageBase64 || ''
+}
+
+function whatsappHref(phone, providerName) {
+  const digits = String(phone || '').replace(/\D/g, '')
+  if (!digits) return ''
+  const normalized = digits.startsWith('55') ? digits : `55${digits}`
+  const message = encodeURIComponent(`Olá, vim pela página ${providerName || 'do prestador'} e quero tirar uma dúvida.`)
+  return `https://wa.me/${normalized}?text=${message}`
+}
+
+function instagramHref(username) {
+  const value = String(username || '').trim()
+  if (!value) return ''
+  if (/^https?:\/\//i.test(value)) return value
+  return `https://instagram.com/${value.replace(/^@/, '')}`
 }
 
 function mapPlatformSettingsRow(row) {
@@ -131,6 +173,27 @@ function mapProviderRow(row) {
     city: row.city,
     about: row.about || '',
     highlights: row.highlights || [],
+    landingSubtitle: row.landing_subtitle || '',
+    ctaLabel: row.cta_label || 'Agendar agora',
+    proofTitle: row.proof_title || '',
+    proofItems: row.proof_items || [],
+    faqItems: Array.isArray(row.faq_items) ? row.faq_items : [],
+    contactChannels: row.contact_channels && typeof row.contact_channels === 'object' ? row.contact_channels : {},
+    trustBadges: row.trust_badges || [],
+    termsText: row.terms_text || '',
+    neighborhood: row.neighborhood || '',
+    address: row.address || '',
+    serviceMode: row.service_mode || 'presencial_online',
+    heroBannerUrl: row.hero_banner_url || '',
+    galleryPhotos: Array.isArray(row.gallery_photos) ? row.gallery_photos : [],
+    testimonials: Array.isArray(row.testimonials) ? row.testimonials : [],
+    seoTitle: row.seo_title || '',
+    seoDescription: row.seo_description || '',
+    metaPixelId: row.meta_pixel_id || '',
+    googleTagId: row.google_tag_id || '',
+    thankYouTitle: row.thank_you_title || 'Solicitacao recebida',
+    thankYouMessage: row.thank_you_message || 'Recebemos seu pedido de agendamento. O prestador vai confirmar os detalhes pelo contato informado.',
+    landingStatus: row.landing_status || 'publicado',
     inviteTitle: row.invite_title,
     inviteMessage: row.invite_message,
     firstOffer: row.first_offer,
@@ -182,6 +245,7 @@ function mapPortfolioPhotoRow(row) {
     imageBase64: row.image_base64,
     caption: row.caption,
     position: row.position,
+    kind: row.kind || 'foto',
     createdAt: row.created_at,
   }
 }
@@ -443,12 +507,6 @@ function clearSavedClient(providerId) {
   }
 }
 
-function preferredServiceId(currentData, providerId, saved) {
-  const activeServices = currentData.providerServices.filter((service) => service.providerId === providerId && service.active)
-  const savedService = saved?.lastServiceId && activeServices.find((service) => service.id === saved.lastServiceId)
-  return savedService?.id || activeServices[0]?.id || ''
-}
-
 function hasExistingConsent(currentData, providerId, contact) {
   const normalizedContact = (contact || '').trim().toLowerCase()
   if (!providerId || !normalizedContact) return false
@@ -591,6 +649,11 @@ function App() {
   const [clientFilter, setClientFilter] = useState('todos')
   const [clientSearch, setClientSearch] = useState('')
   const [successMessage, setSuccessMessage] = useState('')
+  const [thankYouBooking, setThankYouBooking] = useState(null)
+  const [cartPanelOpen, setCartPanelOpen] = useState(false)
+  const [checkoutStep, setCheckoutStep] = useState(false)
+  const [cartToast, setCartToast] = useState(null)
+  const cartToastTimeout = useRef(null)
   const [privacyContact, setPrivacyContact] = useState('')
   const [privacyMessage, setPrivacyMessage] = useState('')
   const [blockForm, setBlockForm] = useState({ time: '11:00', reason: '' })
@@ -781,6 +844,34 @@ function App() {
     setData((current) => producer(current))
   }
 
+  const sendExternalAnalyticsEvent = useCallback((eventType, targetService) => {
+    const providerForEvent = targetService?.provider || data?.providers.find((item) => item.id === targetService?.providerId)
+    if (!providerForEvent) return
+    const metaEvents = {
+      visualizou_servico: 'ViewContent',
+      iniciou_agendamento: 'InitiateCheckout',
+      agendamento_concluido: 'Lead',
+    }
+    const googleEvents = {
+      visualizou_servico: 'view_item',
+      iniciou_agendamento: 'begin_checkout',
+      agendamento_concluido: 'generate_lead',
+    }
+    if (providerForEvent.metaPixelId && typeof window.fbq === 'function') {
+      window.fbq('track', metaEvents[eventType] || eventType, {
+        content_name: targetService?.name || providerForEvent.name,
+        content_ids: [targetService?.id || providerForEvent.id],
+      })
+    }
+    if (providerForEvent.googleTagId && typeof window.gtag === 'function') {
+      window.gtag('event', googleEvents[eventType] || eventType, {
+        send_to: providerForEvent.googleTagId,
+        item_name: targetService?.name || providerForEvent.name,
+        item_id: targetService?.id || providerForEvent.id,
+      })
+    }
+  }, [data])
+
   const trackAnalyticsEvent = useCallback(async (eventType, targetService, allowRepeat = false) => {
     if (!targetService?.providerId) return
     const visitorId = getVisitorId()
@@ -809,7 +900,8 @@ function App() {
       created_at: event.createdAt,
     })
     if (error) console.warn('Não foi possível registrar o evento de desempenho.', error.message)
-  }, [])
+    sendExternalAnalyticsEvent(eventType, targetService)
+  }, [sendExternalAnalyticsEvent])
 
   const resolvePublicRoute = (currentData) => {
     const representativeToken = getInviteToken('representante')
@@ -857,7 +949,6 @@ function App() {
           client: savedInvitedClient?.name || current.client,
           contact: savedInvitedClient?.contact || current.contact,
           consent: current.consent || hasExistingConsent(currentData, invitedProvider.id, savedInvitedClient?.contact),
-          serviceId: preferredServiceId(currentData, invitedProvider.id, savedInvitedClient),
         }))
         return true
       }
@@ -882,7 +973,6 @@ function App() {
       client: savedLinkedClient?.name || current.client,
       contact: savedLinkedClient?.contact || current.contact,
       consent: current.consent || hasExistingConsent(currentData, linkedProvider.id, savedLinkedClient?.contact),
-      serviceId: preferredServiceId(currentData, linkedProvider.id, savedLinkedClient),
     }))
     return true
   }
@@ -987,7 +1077,9 @@ function App() {
   }, [data, publicProviderId, providerTab, selectedProvider, loadedPortfolioProviders])
 
 
-  const activeProviders = data ? data.providers.filter((provider) => provider.active && provider.approvalStatus === 'aprovado') : []
+  const activeProviders = data
+    ? data.providers.filter((provider) => provider.active && provider.approvalStatus === 'aprovado' && provider.landingStatus !== 'rascunho')
+    : []
   const storeEntry = publicEntryType === 'loja' && Boolean(publicProviderId)
   const publicServices = data
     ? data.providerServices
@@ -1003,12 +1095,28 @@ function App() {
       .includes(query.toLowerCase()),
   )
   const bookingService = publicServices.find((item) => item.id === bookingForm.serviceId) || publicServices[0]
+  const publicThemeProvider = publicProviderId
+    ? bookingService?.provider || activeProviders.find((item) => item.id === publicProviderId)
+    : null
+  const publicThemeChoice = publicThemeProvider?.theme?.publicAppearance
+    ? publicThemeProvider.theme.publicAppearance
+    : null
   const publicResources = data && bookingService
     ? data.providerResources
         .filter((resource) => resource.providerId === bookingService.providerId && resource.active)
         .sort((first, second) => first.position - second.position || first.name.localeCompare(second.name))
     : []
+  const publicProviderResources = data && publicProviderId
+    ? data.providerResources
+        .filter((resource) => resource.providerId === publicProviderId && resource.active)
+        .sort((first, second) => first.position - second.position || first.name.localeCompare(second.name))
+    : []
   const cartServices = publicServices.filter((item) => bookingForm.cartServiceIds.includes(item.id) && item.id !== bookingService?.id)
+  const addedServices = bookingForm.serviceId ? [bookingService, ...cartServices].filter(Boolean) : []
+  const addedServicesTotal = addedServices
+    .filter((item) => item.priceMode === 'fixo' && item.provider.showPrices)
+    .reduce((sum, item) => sum + item.price, 0)
+  const addedServicesHasVariable = addedServices.some((item) => item.priceMode !== 'fixo' || !item.provider.showPrices)
   const trackedServiceId = bookingService?.id
   const trackedProviderId = bookingService?.providerId
 
@@ -1019,6 +1127,99 @@ function App() {
     }
   }, [singlePublicResourceId, bookingForm.resourceId])
   const activeSessionRole = session?.role
+
+  useEffect(() => {
+    if (!publicProviderId || !publicThemeChoice || publicThemeChoice === 'system') return undefined
+
+    const previousTheme = document.documentElement.dataset.theme
+    const previousColorScheme = document.documentElement.style.colorScheme
+    document.documentElement.dataset.theme = publicThemeChoice
+    document.documentElement.style.colorScheme = publicThemeChoice
+
+    return () => {
+      if (previousTheme) {
+        document.documentElement.dataset.theme = previousTheme
+      } else {
+        delete document.documentElement.dataset.theme
+      }
+      document.documentElement.style.colorScheme = previousColorScheme
+    }
+  }, [publicProviderId, publicThemeChoice])
+
+  useEffect(() => {
+    if (!publicThemeProvider || session?.role !== 'cliente') return undefined
+
+    const previousTitle = document.title
+    const title = publicThemeProvider.seoTitle || `${publicThemeProvider.name} | Agendamento`
+    const description = publicThemeProvider.seoDescription || publicThemeProvider.landingSubtitle || publicThemeProvider.inviteMessage || `Agende atendimento com ${publicThemeProvider.name}.`
+    // eslint-disable-next-line react/immutability -- a landing publica precisa sincronizar o titulo do documento.
+    document.title = title
+    upsertMetaTag('meta[name="description"]', { name: 'description', content: description })
+    upsertMetaTag('meta[property="og:title"]', { property: 'og:title', content: title })
+    upsertMetaTag('meta[property="og:description"]', { property: 'og:description', content: description })
+    upsertMetaTag('meta[property="og:type"]', { property: 'og:type', content: 'website' })
+
+    return () => {
+      // eslint-disable-next-line react/immutability -- restaura o titulo da aplicacao ao sair do link publico.
+      document.title = previousTitle
+    }
+  }, [publicThemeProvider, session?.role])
+
+  const trackExternalLandingEvent = useCallback((eventName, providerTarget) => {
+    if (!providerTarget || typeof window === 'undefined') return
+
+    if (providerTarget.metaPixelId && typeof window.fbq === 'function') {
+      window.fbq('trackCustom', eventName, {
+        provider_id: providerTarget.id,
+        provider_name: providerTarget.name,
+      })
+    }
+
+    if (providerTarget.googleTagId && typeof window.gtag === 'function') {
+      window.gtag('event', eventName, {
+        provider_id: providerTarget.id,
+        provider_name: providerTarget.name,
+      })
+    }
+  }, [])
+
+  useEffect(() => {
+    if (!publicThemeProvider || session?.role !== 'cliente' || typeof window === 'undefined') return
+
+    if (publicThemeProvider.metaPixelId && !document.getElementById('provider-meta-pixel')) {
+      const pixelScript = document.createElement('script')
+      pixelScript.id = 'provider-meta-pixel'
+      pixelScript.innerHTML = `
+        !function(f,b,e,v,n,t,s){if(f.fbq)return;n=f.fbq=function(){n.callMethod?
+        n.callMethod.apply(n,arguments):n.queue.push(arguments)};if(!f._fbq)f._fbq=n;
+        n.push=n;n.loaded=!0;n.version='2.0';n.queue=[];t=b.createElement(e);t.async=!0;
+        t.src=v;s=b.getElementsByTagName(e)[0];s.parentNode.insertBefore(t,s)}
+        (window, document,'script','https://connect.facebook.net/en_US/fbevents.js');
+      `
+      document.head.appendChild(pixelScript)
+    }
+    if (publicThemeProvider.metaPixelId && typeof window.fbq === 'function') {
+      window.fbq('init', publicThemeProvider.metaPixelId)
+      window.fbq('track', 'PageView')
+    }
+
+    if (publicThemeProvider.googleTagId && !document.getElementById('provider-google-tag')) {
+      const googleScript = document.createElement('script')
+      googleScript.id = 'provider-google-tag'
+      googleScript.async = true
+      googleScript.src = `https://www.googletagmanager.com/gtag/js?id=${publicThemeProvider.googleTagId}`
+      document.head.appendChild(googleScript)
+      window.dataLayer = window.dataLayer || []
+      window.gtag = function gtag(){ window.dataLayer.push(arguments) }
+      window.gtag('js', new Date())
+      window.gtag('config', publicThemeProvider.googleTagId)
+    }
+  }, [publicThemeProvider, session?.role])
+
+  useEffect(() => {
+    if (!publicThemeProvider || session?.role !== 'cliente') return
+    trackExternalLandingEvent(publicEntryType === 'loja' ? 'view_storefront' : 'view_booking_page', publicThemeProvider)
+  }, [publicThemeProvider, publicEntryType, session?.role, trackExternalLandingEvent])
 
   useEffect(() => {
     if (!activeSessionRole || view !== 'cliente' || activeSessionRole === 'admin' || publicEntryType !== 'agendar' || !trackedServiceId || !trackedProviderId) return
@@ -1041,13 +1242,17 @@ function App() {
         .filter((photo) => photo.providerId === provider.id)
         .sort((first, second) => first.position - second.position || first.caption.localeCompare(second.caption))
     : []
+  const providerBannerPhotos = providerPhotos.filter((photo) => !photo.serviceId && photo.kind === 'banner')
+  const providerGeneralPhotos = providerPhotos.filter((photo) => !photo.serviceId && photo.kind !== 'banner')
   const publicPhotos = data && publicProviderId
     ? data.portfolioPhotos
         .filter((photo) => photo.providerId === publicProviderId)
         .sort((first, second) => first.position - second.position || first.caption.localeCompare(second.caption))
     : []
-  const publicGeneralPhotos = publicPhotos.filter((photo) => !photo.serviceId)
+  const publicGeneralPhotos = publicPhotos.filter((photo) => !photo.serviceId && photo.kind !== 'banner')
+  const publicBanners = publicPhotos.filter((photo) => !photo.serviceId && photo.kind === 'banner')
   const inviteDraft = (provider && inviteDrafts[provider.id]) || provider
+  const previewHeroBannerUrl = providerBannerPhotos[0]?.imageBase64 || inviteDraft?.heroBannerUrl || ''
   const hasUnsavedChanges = Boolean(provider && inviteDrafts[provider.id])
   const bookingServiceName = (booking) =>
     data?.providerServices.find((service) => service.id === booking.serviceId)?.name || 'Servico nao especificado'
@@ -1142,9 +1347,10 @@ function App() {
     setPublicProviderId(entry.provider.id)
     setPublicEntryType('agendar')
     setSuccessMessage('')
+    setCheckoutStep(true)
     window.history.replaceState(null, '', `#agendar=${entry.provider.slug || entry.provider.id}`)
     trackAnalyticsEvent('iniciou_agendamento', entry.service)
-    window.setTimeout(() => document.querySelector('[data-booking-form]')?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 0)
+    window.setTimeout(() => window.scrollTo(0, 0), 0)
   }
   const analyticsCutoff = new Date()
   analyticsCutoff.setDate(analyticsCutoff.getDate() - analyticsDays)
@@ -1248,13 +1454,33 @@ function App() {
     if (error) alert('Não foi possível salvar esse parâmetro no banco de dados. Tente novamente.')
   }
 
-  const toggleCartService = (serviceId) => {
-    setBookingForm((current) => ({
-      ...current,
-      cartServiceIds: current.cartServiceIds.includes(serviceId)
-        ? current.cartServiceIds.filter((id) => id !== serviceId)
-        : [...current.cartServiceIds, serviceId],
-    }))
+  const showCartToast = (message, type) => {
+    setCartToast({ message, type })
+    if (cartToastTimeout.current) clearTimeout(cartToastTimeout.current)
+    cartToastTimeout.current = setTimeout(() => setCartToast(null), 1400)
+  }
+
+  const toggleServiceInBooking = (item) => {
+    trackAnalyticsEvent('visualizou_servico', item)
+    const alreadyAdded = bookingForm.serviceId === item.id || bookingForm.cartServiceIds.includes(item.id)
+    if (!alreadyAdded) {
+      trackAnalyticsEvent('iniciou_agendamento', item)
+      showCartToast(`${item.name} adicionado ao carrinho`, 'add')
+    } else {
+      showCartToast(`${item.name} removido do carrinho`, 'remove')
+    }
+    setSuccessMessage('')
+    setBookingForm((current) => {
+      if (current.serviceId === item.id) {
+        const [nextPrimary, ...restCart] = current.cartServiceIds
+        return { ...current, serviceId: nextPrimary || '', cartServiceIds: restCart, resourceId: '' }
+      }
+      if (current.cartServiceIds.includes(item.id)) {
+        return { ...current, cartServiceIds: current.cartServiceIds.filter((id) => id !== item.id) }
+      }
+      if (!current.serviceId) return { ...current, serviceId: item.id, resourceId: '' }
+      return { ...current, cartServiceIds: [...current.cartServiceIds, item.id] }
+    })
   }
 
   const createBooking = async (event) => {
@@ -1376,9 +1602,21 @@ function App() {
       lastServiceId: selectedBookingService.id,
     })
 
-    setBookingForm({ ...bookingForm, client: '', contact: '', notes: '', consent: false, cartServiceIds: [] })
+    setThankYouBooking({
+      provider: availableProvider,
+      service: selectedBookingService,
+      extraServices: extraServicesText,
+      date: bookingForm.date,
+      time: bookingForm.time,
+      client: bookingForm.client,
+    })
+    setBookingForm({ ...bookingForm, client: '', contact: '', notes: '', consent: false, serviceId: '', cartServiceIds: [] })
     setSuccessMessage('Agendamento solicitado. O prestador recebeu sua solicitação.')
     setSelectedProvider(availableProvider.id)
+    setCheckoutStep(false)
+    setCartPanelOpen(false)
+    trackExternalLandingEvent('booking_complete', availableProvider)
+    window.scrollTo(0, 0)
 
     try {
       if (existingClient) {
@@ -1432,6 +1670,7 @@ function App() {
         notes: bookingForm.notes,
       })
       if (bookingError) throw bookingError
+      await trackAnalyticsEvent('agendamento_concluido', selectedBookingService, true)
       if (clientInviteToken) {
         await supabase
           .from('client_invites')
@@ -1477,6 +1716,27 @@ function App() {
       inviteTitle: `Agende com ${providerForm.name}`,
       inviteMessage: 'Escolha um horario disponivel e envie sua solicitacao de atendimento.',
       firstOffer: providerForm.service,
+      landingSubtitle: '',
+      ctaLabel: 'Agendar agora',
+      proofTitle: '',
+      proofItems: [],
+      faqItems: [],
+      contactChannels: {},
+      trustBadges: [],
+      termsText: '',
+      neighborhood: '',
+      address: '',
+      serviceMode: 'presencial_online',
+      heroBannerUrl: '',
+      galleryPhotos: [],
+      testimonials: [],
+      seoTitle: '',
+      seoDescription: '',
+      metaPixelId: '',
+      googleTagId: '',
+      thankYouTitle: 'Solicitacao recebida',
+      thankYouMessage: 'Recebemos seu pedido de agendamento. O prestador vai confirmar os detalhes pelo contato informado.',
+      landingStatus: 'rascunho',
       logoUrl: '',
       theme: { accent: data.brand.accent, background: '#111827', style: 'profissional' },
       active: autoApprove,
@@ -1522,6 +1782,27 @@ function App() {
       invite_title: newProvider.inviteTitle,
       invite_message: newProvider.inviteMessage,
       first_offer: newProvider.firstOffer,
+      landing_subtitle: newProvider.landingSubtitle,
+      cta_label: newProvider.ctaLabel,
+      proof_title: newProvider.proofTitle,
+      proof_items: newProvider.proofItems,
+      faq_items: newProvider.faqItems,
+      contact_channels: newProvider.contactChannels,
+      trust_badges: newProvider.trustBadges,
+      terms_text: newProvider.termsText,
+      neighborhood: newProvider.neighborhood,
+      address: newProvider.address,
+      service_mode: newProvider.serviceMode,
+      hero_banner_url: newProvider.heroBannerUrl,
+      gallery_photos: newProvider.galleryPhotos,
+      testimonials: newProvider.testimonials,
+      seo_title: newProvider.seoTitle,
+      seo_description: newProvider.seoDescription,
+      meta_pixel_id: newProvider.metaPixelId,
+      google_tag_id: newProvider.googleTagId,
+      thank_you_title: newProvider.thankYouTitle,
+      thank_you_message: newProvider.thankYouMessage,
+      landing_status: newProvider.landingStatus,
       logo_url: newProvider.logoUrl,
       theme: newProvider.theme,
       duration: newService.duration || 50,
@@ -1816,12 +2097,12 @@ function App() {
       reader.readAsDataURL(file)
     })
 
-  const uploadPortfolioPhoto = async (serviceId, file) => {
+  const uploadPortfolioPhoto = async (serviceId, file, kind = 'foto') => {
     if (!file) return
-    const targetPhotos = providerPhotos.filter((photo) => (serviceId ? photo.serviceId === serviceId : !photo.serviceId))
-    const limit = serviceId ? 6 : 10
+    const targetPhotos = providerPhotos.filter((photo) => (serviceId ? photo.serviceId === serviceId : !photo.serviceId && photo.kind === kind))
+    const limit = serviceId ? 6 : kind === 'banner' ? 6 : 10
     if (targetPhotos.length >= limit) {
-      alert(`Limite de ${limit} fotos atingido.`)
+      alert(`Limite de ${limit} ${kind === 'banner' ? 'banners' : 'fotos'} atingido.`)
       return
     }
 
@@ -1834,6 +2115,7 @@ function App() {
       imageBase64,
       caption: '',
       position: targetPhotos.length,
+      kind,
       createdAt: new Date().toISOString(),
     }
     updateData((current) => ({ ...current, portfolioPhotos: [...current.portfolioPhotos, photo] }))
@@ -1844,9 +2126,36 @@ function App() {
       image_base64: imageBase64,
       caption: '',
       position: photo.position,
+      kind,
       created_at: photo.createdAt,
     })
     if (error) alert('Nao foi possivel salvar essa foto no banco de dados.')
+  }
+
+  const movePortfolioPhoto = async (photoId, direction) => {
+    const photo = providerPhotos.find((item) => item.id === photoId)
+    if (!photo) return
+    const siblings = providerPhotos.filter((item) => item.serviceId === photo.serviceId && item.kind === photo.kind)
+    const index = siblings.findIndex((item) => item.id === photoId)
+    const swapIndex = index + direction
+    if (index < 0 || swapIndex < 0 || swapIndex >= siblings.length) return
+
+    const first = siblings[index]
+    const second = siblings[swapIndex]
+    updateData((current) => ({
+      ...current,
+      portfolioPhotos: current.portfolioPhotos.map((item) =>
+        item.id === first.id
+          ? { ...item, position: second.position }
+          : item.id === second.id
+            ? { ...item, position: first.position }
+            : item,
+      ),
+    }))
+    await Promise.all([
+      supabase.from('portfolio_photos').update({ position: second.position }).eq('id', first.id),
+      supabase.from('portfolio_photos').update({ position: first.position }).eq('id', second.id),
+    ])
   }
 
   const updatePortfolioPhotoCaption = async (photoId, caption) => {
@@ -2205,6 +2514,18 @@ function App() {
     setSavedNotice('')
   }
 
+  const publishLandingNow = async (providerId) => {
+    updateData((current) => ({
+      ...current,
+      providers: current.providers.map((item) => (item.id === providerId ? { ...item, landingStatus: 'publicado' } : item)),
+    }))
+    setInviteDrafts((current) =>
+      current[providerId] ? { ...current, [providerId]: { ...current[providerId], landingStatus: 'publicado' } } : current,
+    )
+    const { error } = await supabase.from('providers').update({ landing_status: 'publicado' }).eq('id', providerId)
+    if (error) alert('Não foi possível publicar a página agora. Tente novamente.')
+  }
+
   const saveInviteDraft = async (providerId) => {
     const draft = inviteDrafts[providerId]
     if (!draft) {
@@ -2223,6 +2544,27 @@ function App() {
               city: draft.city,
               about: draft.about,
               highlights: draft.highlights,
+              landingSubtitle: draft.landingSubtitle,
+              ctaLabel: draft.ctaLabel,
+              proofTitle: draft.proofTitle,
+              proofItems: draft.proofItems,
+              faqItems: draft.faqItems,
+              contactChannels: draft.contactChannels,
+              trustBadges: draft.trustBadges,
+              termsText: draft.termsText,
+              neighborhood: draft.neighborhood,
+              address: draft.address,
+              serviceMode: draft.serviceMode,
+              heroBannerUrl: draft.heroBannerUrl,
+              galleryPhotos: draft.galleryPhotos,
+              testimonials: draft.testimonials,
+              seoTitle: draft.seoTitle,
+              seoDescription: draft.seoDescription,
+              metaPixelId: draft.metaPixelId,
+              googleTagId: draft.googleTagId,
+              thankYouTitle: draft.thankYouTitle,
+              thankYouMessage: draft.thankYouMessage,
+              landingStatus: draft.landingStatus,
               logoUrl: draft.logoUrl,
               inviteTitle: draft.inviteTitle,
               inviteMessage: draft.inviteMessage,
@@ -2248,6 +2590,27 @@ function App() {
         city: draft.city,
         about: draft.about,
         highlights: draft.highlights,
+        landing_subtitle: draft.landingSubtitle,
+        cta_label: draft.ctaLabel,
+        proof_title: draft.proofTitle,
+        proof_items: draft.proofItems,
+        faq_items: draft.faqItems,
+        contact_channels: draft.contactChannels,
+        trust_badges: draft.trustBadges,
+        terms_text: draft.termsText,
+        neighborhood: draft.neighborhood,
+        address: draft.address,
+        service_mode: draft.serviceMode,
+        hero_banner_url: draft.heroBannerUrl,
+        gallery_photos: draft.galleryPhotos,
+        testimonials: draft.testimonials,
+        seo_title: draft.seoTitle,
+        seo_description: draft.seoDescription,
+        meta_pixel_id: draft.metaPixelId,
+        google_tag_id: draft.googleTagId,
+        thank_you_title: draft.thankYouTitle,
+        thank_you_message: draft.thankYouMessage,
+        landing_status: draft.landingStatus,
         logo_url: draft.logoUrl,
         invite_title: draft.inviteTitle,
         invite_message: draft.inviteMessage,
@@ -2648,9 +3011,605 @@ function App() {
     )
   }
 
+  const renderPublicSections = (multiProvider) => {
+    const heroProvider = bookingService?.provider
+    const savedClient = bookingService ? getSavedClient(bookingService.providerId) : null
+    const resourcesToShow = multiProvider ? publicResources : publicProviderResources
+    const fieldGalleryPhotos = (heroProvider?.galleryPhotos || []).map(normalizePhotoUrl).filter(Boolean)
+    const heroBannerUrl = publicBanners[0]?.imageBase64 || heroProvider?.heroBannerUrl || fieldGalleryPhotos[0] || ''
+    const visibleTestimonials = (heroProvider?.testimonials || []).filter((item) => item?.name || item?.text)
+    const whatsappLink = whatsappHref(heroProvider?.contactChannels?.whatsapp, heroProvider?.name)
+    const instagramLink = instagramHref(heroProvider?.contactChannels?.instagram)
+    const hasLocationInfo = Boolean(heroProvider?.neighborhood || heroProvider?.address || heroProvider?.serviceMode)
+    const serviceModeLabel = {
+      presencial: 'Atendimento presencial',
+      online: 'Atendimento online',
+      presencial_online: 'Presencial e online',
+      domiciliar: 'Atendimento em domicilio',
+    }[heroProvider?.serviceMode] || heroProvider?.serviceMode
+    return (
+      <>
+        {publicEntryType === 'agendar' && cartToast && (
+          <div className={cartToast.type === 'remove' ? 'cartToast cartToastRemove' : 'cartToast'}>
+            {cartToast.type === 'remove' ? <Trash2 size={18} /> : <CheckCircle2 size={18} />}
+            <span>{cartToast.message}</span>
+          </div>
+        )}
+
+        {!checkoutStep && (instagramLink || whatsappLink) && (
+          <div className="socialFloatStack" aria-label="Canais rápidos">
+            {instagramLink && (
+              <a
+                className="socialFloat instagramFloat"
+                href={instagramLink}
+                target="_blank"
+                rel="noreferrer"
+                onClick={() => trackExternalLandingEvent('instagram_click', heroProvider)}
+                aria-label="Abrir Instagram"
+              >
+                <svg className="instagramIcon" viewBox="0 0 64 64" aria-hidden="true" focusable="false">
+                  <defs>
+                    <linearGradient id="instagramGradient" x1="14" y1="54" x2="52" y2="10" gradientUnits="userSpaceOnUse">
+                      <stop offset="0" stopColor="#feda75" />
+                      <stop offset="0.28" stopColor="#fa7e1e" />
+                      <stop offset="0.52" stopColor="#d62976" />
+                      <stop offset="0.78" stopColor="#962fbf" />
+                      <stop offset="1" stopColor="#4f5bd5" />
+                    </linearGradient>
+                  </defs>
+                  <rect className="instagramIconFrame" x="10" y="10" width="44" height="44" rx="13" />
+                  <circle className="instagramIconLens" cx="32" cy="32" r="10" />
+                  <circle className="instagramIconDot" cx="44" cy="20" r="3" />
+                </svg>
+              </a>
+            )}
+            {whatsappLink && (
+              <a
+                className="socialFloat whatsappFloat"
+                href={whatsappLink}
+                target="_blank"
+                rel="noreferrer"
+                onClick={() => trackExternalLandingEvent('whatsapp_click', heroProvider)}
+                aria-label="Chamar no WhatsApp"
+              >
+                <svg className="whatsappIcon" viewBox="-1 -1 34 34" aria-hidden="true" focusable="false">
+                  <path className="whatsappIconShape" d="M16.02 3.5C9.15 3.5 3.56 8.96 3.56 15.68c0 2.18.6 4.3 1.72 6.15L3.5 28.5l6.88-1.76a12.7 12.7 0 0 0 5.64 1.32c6.87 0 12.48-5.46 12.48-12.18S22.89 3.5 16.02 3.5Z" />
+                  <path className="whatsappIconCutout" d="M16.02 5.75c5.62 0 10.2 4.45 10.2 9.93s-4.58 9.95-10.2 9.95c-1.6 0-3.17-.36-4.6-1.06l-.37-.18-4.1 1.05 1.06-3.95-.23-.38a9.71 9.71 0 0 1-1.93-5.43c0-5.48 4.56-9.93 10.17-9.93Z" />
+                  <path className="whatsappIconPhone" d="M21.36 18.6c-.29-.14-1.7-.82-1.96-.91-.26-.1-.45-.14-.64.14-.19.28-.73.9-.89 1.08-.16.19-.33.21-.61.07-.29-.14-1.2-.43-2.29-1.38-.85-.74-1.42-1.66-1.58-1.94-.16-.28-.02-.43.12-.57.12-.12.29-.33.43-.49.14-.16.19-.28.29-.47.09-.19.05-.35-.02-.49-.07-.14-.64-1.51-.87-2.07-.23-.54-.47-.47-.64-.48h-.54c-.19 0-.49.07-.75.35-.26.28-.99.95-.99 2.32 0 1.37 1.02 2.69 1.16 2.88.14.19 2.01 3 4.88 4.2.68.29 1.21.46 1.63.59.69.21 1.31.18 1.8.11.55-.08 1.7-.68 1.94-1.34.24-.66.24-1.22.17-1.34-.07-.12-.26-.19-.55-.33Z" />
+                </svg>
+              </a>
+            )}
+          </div>
+        )}
+
+        {thankYouBooking && (
+          <section className="panel thankYouPanel">
+            <CheckCircle2 size={34} />
+            <p className="eyebrow">Solicitacao enviada</p>
+            <h2>{heroProvider?.thankYouTitle || 'Recebemos seu pedido'}</h2>
+            <p>{heroProvider?.thankYouMessage || 'O prestador vai confirmar os detalhes pelo contato informado.'}</p>
+            <div className="thankYouSummary">
+              <span>Cliente <strong>{thankYouBooking.client}</strong></span>
+              <span>Servico <strong>{thankYouBooking.service?.name}</strong></span>
+              <span>Horario <strong>{formatDate(thankYouBooking.date)} as {thankYouBooking.time}</strong></span>
+            </div>
+            <button type="button" className="secondaryButton" onClick={() => setThankYouBooking(null)}>
+              Fazer outro agendamento
+            </button>
+          </section>
+        )}
+
+        {!checkoutStep && !thankYouBooking && (
+        <>
+        {(multiProvider ? publicProviderId && bookingService : Boolean(heroProvider)) && (
+          <div
+            className={`inviteHero ${heroProvider.theme?.style || 'profissional'}`}
+            style={multiProvider ? {
+              '--accent': heroProvider.theme?.accent || data.brand.accent,
+              '--provider-accent': heroProvider.theme?.accent,
+              '--provider-bg': heroProvider.theme?.background,
+            } : undefined}
+          >
+            <div className="inviteLogo">
+              {heroProvider.logoUrl ? <img src={heroProvider.logoUrl} alt="" /> : <Store size={30} />}
+            </div>
+            <div>
+              <p className="eyebrow">{publicEntryType === 'loja' ? 'Loja do prestador' : 'Convite de agendamento'}</p>
+              <h2>{publicEntryType === 'loja' ? heroProvider.name : heroProvider.inviteTitle}</h2>
+              {heroProvider.landingSubtitle && <p className="landingSubtitle">{heroProvider.landingSubtitle}</p>}
+              <p>{heroProvider.inviteMessage}</p>
+              <strong>{heroProvider.firstOffer}</strong>
+              {heroProvider.trustBadges.length > 0 && (
+                <div className="trustBadges">
+                  {heroProvider.trustBadges.map((badge) => <span key={badge}>{badge}</span>)}
+                </div>
+              )}
+              {publicEntryType === 'loja' && (
+                <button
+                  className="storeCta"
+                  onClick={() => {
+                    trackAnalyticsEvent('visualizou_servico', bookingService)
+                    trackAnalyticsEvent('iniciou_agendamento', bookingService)
+                    trackExternalLandingEvent('start_booking', heroProvider)
+                    window.location.hash = `agendar=${heroProvider.slug || heroProvider.id}`
+                    setPublicEntryType('agendar')
+                  }}
+                >
+                  {heroProvider.ctaLabel || 'Agendar agora'}
+                </button>
+              )}
+            </div>
+          </div>
+        )}
+
+        {heroBannerUrl && (!multiProvider || bookingService) && (
+          <figure className="publicHeroBanner">
+            <img src={heroBannerUrl} alt="" />
+          </figure>
+        )}
+
+        {hasLocationInfo && (
+          <section className="panel locationPanel">
+            <p className="eyebrow">Atendimento</p>
+            <h3>{serviceModeLabel || 'Como atendemos'}</h3>
+            <div className="locationGrid">
+              {heroProvider?.neighborhood && <span><strong>Bairro</strong>{heroProvider.neighborhood}</span>}
+              {heroProvider?.address && <span><strong>Endereco</strong>{heroProvider.address}</span>}
+              {serviceModeLabel && (heroProvider?.neighborhood || heroProvider?.address) && <span><strong>Formato</strong>{serviceModeLabel}</span>}
+            </div>
+          </section>
+        )}
+
+        <ClientServiceHistory
+          entries={clientServiceHistory}
+          formatDate={formatDate}
+          onRebook={rebookService}
+          providerId={multiProvider ? publicProviderId : heroProvider?.id}
+        />
+
+        {publicBanners.length > 0 && (!multiProvider || bookingService) && (
+          <div className="panel promoPanel">
+            <p className="eyebrow">Promoções</p>
+            <h3>Em destaque</h3>
+            <div className="publicBanners">
+              {publicBanners.map((photo) => (
+                <figure key={photo.id}>
+                  <img src={photo.imageBase64} alt="" />
+                  {photo.caption && <figcaption>{photo.caption}</figcaption>}
+                </figure>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {!multiProvider && heroProvider?.about && (
+          <div className="panel aboutPanel">
+            <p className="eyebrow">Sobre</p>
+            <h3>{heroProvider.name}</h3>
+            {heroProvider.about.split('\n').filter((paragraph) => paragraph.trim()).map((paragraph, index) => (
+              <p key={index}>{paragraph}</p>
+            ))}
+          </div>
+        )}
+
+        {heroProvider?.proofItems.length > 0 && (
+          <div className="panel landingProof">
+            <div>
+              <p className="eyebrow">Confiança</p>
+              <h3>{heroProvider.proofTitle || 'Por que escolher este atendimento'}</h3>
+              <div className="proofGrid">
+                {heroProvider.proofItems.map((proof) => <span key={proof}>{proof}</span>)}
+              </div>
+            </div>
+          </div>
+        )}
+
+        {resourcesToShow.length > 0 && (
+          <div className="panel publicResourcesPanel">
+            <p className="eyebrow">Equipe e estrutura</p>
+            <h3>Escolha como quer ser atendido</h3>
+            <div className="publicResourceGrid">
+              {resourcesToShow.map((resource) => (
+                <article key={resource.id}>
+                  <strong>{resource.name}</strong>
+                  {resource.bio && <p>{resource.bio}</p>}
+                </article>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {(heroProvider?.highlights.length > 0 || publicGeneralPhotos.length > 0 || fieldGalleryPhotos.length > 0) && (!multiProvider || bookingService) && (
+          <div className="panel storeFront">
+            <p className="eyebrow">Vitrine</p>
+            <h3>Conheça o espaço</h3>
+            {heroProvider.highlights.length > 0 && (
+              <div className="chips">
+                {heroProvider.highlights.map((highlight) => <span key={highlight}>{highlight}</span>)}
+              </div>
+            )}
+            {publicGeneralPhotos.length > 0 && (
+              <div className="publicGallery">
+                {publicGeneralPhotos.map((photo) => (
+                  <figure key={photo.id}>
+                    <img src={photo.imageBase64} alt="" />
+                    {photo.caption && <figcaption>{photo.caption}</figcaption>}
+                  </figure>
+                ))}
+              </div>
+            )}
+            {fieldGalleryPhotos.length > 0 && (
+              <div className="publicGallery">
+                {fieldGalleryPhotos.map((photoUrl, index) => (
+                  <figure key={`${photoUrl}-${index}`}>
+                    <img src={photoUrl} alt="" />
+                  </figure>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+
+        {visibleTestimonials.length > 0 && (
+          <section className="panel testimonialsPanel">
+            <p className="eyebrow">Depoimentos</p>
+            <h3>Experiencias de clientes</h3>
+            <div className="testimonialGrid">
+              {visibleTestimonials.map((testimonial, index) => {
+                const testimonialPhoto = normalizePhotoUrl(testimonial.photoUrl || testimonial.photo)
+                const rating = Math.max(1, Math.min(5, Number(testimonial.rating) || 5))
+                return (
+                  <article key={`${testimonial.name}-${index}`}>
+                    {testimonialPhoto && <img src={testimonialPhoto} alt="" />}
+                    <strong>{testimonial.name || 'Cliente'}</strong>
+                    <span aria-label={`${rating} de 5 estrelas`}>Nota {rating}/5</span>
+                    {testimonial.text && <p>{testimonial.text}</p>}
+                  </article>
+                )
+              })}
+            </div>
+          </section>
+        )}
+
+        {heroProvider?.faqItems.filter((item) => item.question || item.answer).length > 0 && (
+          <div className="panel landingFaq">
+            <p className="eyebrow">Dúvidas comuns</p>
+            <h3>Antes de agendar</h3>
+            {heroProvider.faqItems.filter((item) => item.question || item.answer).map((item, index) => (
+              <details key={`${item.question}-${index}`}>
+                <summary>{item.question || 'Pergunta'}</summary>
+                {item.answer && <p>{item.answer}</p>}
+              </details>
+            ))}
+          </div>
+        )}
+
+        {heroProvider?.termsText && (
+          <section className="panel termsPanel">
+            <p className="eyebrow">Politica e termos</p>
+            <details>
+              <summary>Ver condicoes de atendimento</summary>
+              {heroProvider.termsText.split('\n').filter((paragraph) => paragraph.trim()).map((paragraph, index) => (
+                <p key={index}>{paragraph}</p>
+              ))}
+            </details>
+          </section>
+        )}
+
+        {publicEntryType === 'loja' && (
+          <div className="panel">
+            <div className="panelHeader">
+              <div>
+                <p className="eyebrow">Portal do cliente</p>
+                <h2>Escolha um serviço</h2>
+              </div>
+            </div>
+            <div className="providerList">
+              {filteredServices.map((item) => {
+                const servicePhoto = publicPhotos.find((photo) => photo.serviceId === item.id)
+                return (
+                  <button
+                    className="provider serviceCardPublic"
+                    key={item.id}
+                    onClick={() => {
+                      trackAnalyticsEvent('visualizou_servico', item)
+                      trackAnalyticsEvent('iniciou_agendamento', item)
+                      trackExternalLandingEvent('start_booking', item.provider)
+                      setBookingForm({ ...bookingForm, serviceId: item.id, resourceId: '' })
+                      setSuccessMessage('')
+                      window.location.hash = `agendar=${item.provider.slug || item.provider.id}`
+                      setPublicEntryType('agendar')
+                    }}
+                  >
+                    {servicePhoto ? <img src={servicePhoto.imageBase64} alt="" /> : <div className="cardImagePlaceholder"><Image size={28} /></div>}
+                    <strong>{item.name}</strong>
+                    <span>{item.description || item.provider.category}</span>
+                    <small>{formatServiceDuration(item)}</small>
+                    <span className="priceTag">{formatServicePrice(item, item.provider.showPrices)}</span>
+                  </button>
+                )
+              })}
+              {filteredServices.length === 0 && <span className="emptyState">Nenhum serviço encontrado.</span>}
+            </div>
+          </div>
+        )}
+
+        {publicEntryType === 'agendar' && (
+          <div className="panel">
+            <div className="panelHeader">
+              <div>
+                <p className="eyebrow">Portal do cliente</p>
+                <h2>{multiProvider && publicProviderId && !storeEntry ? 'Agende seu atendimento' : 'Escolha um serviço'}</h2>
+              </div>
+              {multiProvider && (!publicProviderId || storeEntry) && (
+                <div className="search">
+                  <Search size={17} />
+                  <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Buscar serviço ou cidade" />
+                </div>
+              )}
+            </div>
+            <div className="providerList">
+              {filteredServices.map((item) => {
+                const servicePhoto = publicPhotos.find((photo) => photo.serviceId === item.id)
+                const isPrimary = bookingForm.serviceId === item.id
+                const isAdded = isPrimary || bookingForm.cartServiceIds.includes(item.id)
+                return (
+                  <article
+                    className={isAdded ? 'provider selected serviceCardPublic' : 'provider serviceCardPublic'}
+                    key={item.id}
+                  >
+                    {servicePhoto ? <img src={servicePhoto.imageBase64} alt="" /> : <div className="cardImagePlaceholder"><Image size={28} /></div>}
+                    {isPrimary && <span className="primaryBadge">Define o horário</span>}
+                    <strong>{item.name}</strong>
+                    <span>{multiProvider ? `${item.provider.name} • ${item.provider.category} • ${item.provider.city}` : (item.description || heroProvider?.category)}</span>
+                    <small>{formatServiceDuration(item)}</small>
+                    <span className="priceTag">{formatServicePrice(item, item.provider.showPrices)}</span>
+                    <button
+                      type="button"
+                      className="addServiceButton"
+                      onClick={() => toggleServiceInBooking(item)}
+                    >
+                      {isAdded ? <><CheckCircle2 size={16} /> Adicionado — toque pra remover</> : 'Adicionar serviço no agendamento'}
+                    </button>
+                  </article>
+                )
+              })}
+              {filteredServices.length === 0 && <span className="emptyState">Nenhum serviço encontrado.</span>}
+            </div>
+          </div>
+        )}
+        </>
+        )}
+
+        {!checkoutStep && publicEntryType === 'agendar' && addedServices.length > 0 && (
+          <div className="floatingCartWrap">
+            <button
+              type="button"
+              className="floatingCart"
+              onClick={() => setCartPanelOpen((current) => !current)}
+            >
+              <ShoppingCart size={18} />
+              <span>Carrinho</span>
+              <span className="floatingCartCount">{addedServices.length}</span>
+            </button>
+
+            {cartPanelOpen && (
+              <div className="cartPanel">
+                <div className="cartPanelHeader">
+                  <strong>Seu carrinho</strong>
+                  <button type="button" className="textButton" onClick={() => setCartPanelOpen(false)}>Fechar</button>
+                </div>
+                <div className="cartPanelList">
+                  {addedServices.map((item) => (
+                    <div className="cartPanelItem" key={item.id}>
+                      <div>
+                        <strong>{item.name}</strong>
+                        {item.id === bookingForm.serviceId && <span className="primaryBadge">Define o horário</span>}
+                        <small>{formatServiceDuration(item)} • {formatServicePrice(item, item.provider.showPrices)}</small>
+                      </div>
+                      <button type="button" className="textButton" onClick={() => toggleServiceInBooking(item)} title="Remover" aria-label={`Remover ${item.name}`}>
+                        <Trash2 size={16} />
+                      </button>
+                    </div>
+                  ))}
+                </div>
+                <div className="cartPanelFooter">
+                  <span>Total{addedServicesHasVariable ? ' (itens sob consulta à parte)' : ''}</span>
+                  <strong>{currency(addedServicesTotal)}</strong>
+                </div>
+                <button
+                  type="button"
+                  className="primary"
+                  onClick={() => {
+                    setCartPanelOpen(false)
+                    setCheckoutStep(true)
+                    window.scrollTo(0, 0)
+                  }}
+                >
+                  Ir para o agendamento
+                </button>
+              </div>
+            )}
+          </div>
+        )}
+
+        {checkoutStep && publicEntryType === 'agendar' && (
+          <button type="button" className="textButton backToStore" onClick={() => { setCheckoutStep(false); window.scrollTo(0, 0) }}>
+            <ChevronLeft size={16} /> Voltar pra escolher serviços
+          </button>
+        )}
+
+        {checkoutStep && publicEntryType === 'agendar' && successMessage && (
+          <div className="panel thankYouPanel">
+            <CheckCircle2 size={30} />
+            <div>
+              <p className="eyebrow">Agendamento enviado</p>
+              <h2>{bookingService?.provider?.thankYouTitle || 'Solicitação recebida'}</h2>
+              <p>{bookingService?.provider?.thankYouMessage || successMessage}</p>
+            </div>
+            <button type="button" className="secondaryButton compactButton" onClick={() => { setCheckoutStep(false); setSuccessMessage(''); window.scrollTo(0, 0) }}>
+              Ver outros serviços
+            </button>
+          </div>
+        )}
+
+        {checkoutStep && publicEntryType === 'agendar' && !successMessage && (
+          <form className="panel form" data-booking-form onSubmit={createBooking} onFocusCapture={() => trackAnalyticsEvent('iniciou_agendamento', bookingService)}>
+            <div className="panelHeader compact">
+              <div>
+                <p className="eyebrow">Novo agendamento</p>
+                <h2>Solicitar horário</h2>
+              </div>
+              <Clock3 size={22} />
+            </div>
+
+            {bookingService && (
+              <div className="selectedService">
+                <span>Este serviço define o horário</span>
+                <strong>{multiProvider ? `${bookingService.provider.name} • ${bookingService.name}` : bookingService.name}</strong>
+                <small>
+                  {multiProvider && `${bookingService.provider.category} • ${bookingService.provider.city} • `}
+                  {formatServiceDuration(bookingService)} • {formatServicePrice(bookingService, bookingService.provider.showPrices)}
+                </small>
+              </div>
+            )}
+
+            {cartServices.length > 0 && (
+              <div className="selectedService">
+                <span>Itens extras — sem horário próprio, combinados no mesmo atendimento</span>
+                {cartServices.map((item) => (
+                  <strong key={item.id}>{item.name}{item.provider.showPrices ? ` — ${formatServicePrice(item, true)}` : ''}</strong>
+                ))}
+                <small>
+                  Total{addedServicesHasVariable ? ' (itens sob consulta à parte)' : ''}: {currency(addedServicesTotal)}
+                </small>
+              </div>
+            )}
+
+            {!multiProvider && savedClient && (
+              <p className="privacyHint">
+                Bem-vindo(a) de volta, {savedClient.name}!{' '}
+                <button
+                  type="button"
+                  className="textButton"
+                  onClick={() => {
+                    clearSavedClient(heroProvider.id)
+                    setBookingForm({ ...bookingForm, client: '', contact: '' })
+                  }}
+                >
+                  Não é você? Limpar dados salvos
+                </button>
+              </p>
+            )}
+
+            <label>Nome do cliente
+              <input required value={bookingForm.client} onChange={(event) => setBookingForm({ ...bookingForm, client: event.target.value })} />
+            </label>
+            <label>E-mail ou WhatsApp
+              <input
+                required
+                value={bookingForm.contact}
+                onChange={(event) => {
+                  const nextContact = event.target.value
+                  setBookingForm({
+                    ...bookingForm,
+                    contact: nextContact,
+                    consent: bookingForm.consent || hasExistingConsent(data, bookingService?.providerId, nextContact),
+                  })
+                }}
+              />
+            </label>
+            {publicResources.length > 0 && (
+              <div className="timePicker">
+                <strong>Com quem</strong>
+                <div>
+                  {publicResources.map((resource) => (
+                    <button
+                      className={bookingForm.resourceId === resource.id ? 'selected' : ''}
+                      key={resource.id}
+                      onClick={() => setBookingForm({ ...bookingForm, resourceId: resource.id, time: '' })}
+                      type="button"
+                    >
+                      {resource.name}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+            <div className="inlineFields">
+              <label>Data
+                <input required max={maxBookingDate} min={today} type="date" value={bookingForm.date} onChange={(event) => setBookingForm({ ...bookingForm, date: event.target.value })} />
+              </label>
+            </div>
+            <div className="timePicker">
+              <strong>Horário</strong>
+              <div>
+                {availableTimes.map((slot) => (
+                  <button
+                    className={bookingForm.time === slot.time ? 'selected' : ''}
+                    disabled={!slot.available}
+                    key={slot.time}
+                    onClick={() => setBookingForm({ ...bookingForm, time: slot.time })}
+                    type="button"
+                  >
+                    {slot.time}
+                  </button>
+                ))}
+              </div>
+            </div>
+            <label>Observações
+              <textarea value={bookingForm.notes} onChange={(event) => setBookingForm({ ...bookingForm, notes: event.target.value })} />
+            </label>
+            {data.settings.requireConsent && (
+              <>
+                <label className="checkLabel">
+                  <input
+                    required
+                    type="checkbox"
+                    checked={bookingForm.consent}
+                    onChange={(event) => setBookingForm({ ...bookingForm, consent: event.target.checked })}
+                  />
+                  Autorizo o uso do meu nome e contato para gerenciar este atendimento, retornos e comunicações com este prestador.
+                </label>
+                <p className="privacyHint">
+                  {hasExistingConsent(data, bookingService?.providerId, bookingForm.contact)
+                    ? 'Consentimento já registrado para esse contato com este prestador. Você pode revisar desmarcando a caixa acima.'
+                    : 'Seus dados ficam vinculados somente ao prestador deste link. Você pode solicitar acesso ou exclusão pelo canal de privacidade.'}
+                </p>
+              </>
+            )}
+            <button className="primary" type="submit"><Plus size={18} /> Agendar</button>
+          </form>
+        )}
+
+        {checkoutStep && publicEntryType === 'agendar' && data.settings.allowClientPrivacyRequest && (
+          <form className="panel privacyPanel" onSubmit={createPrivacyRequest}>
+            <div className="panelHeader compact">
+              <div>
+                <p className="eyebrow">Privacidade</p>
+                <h2>Dados do cliente</h2>
+              </div>
+              <Shield size={22} />
+            </div>
+            <p>
+              Solicite acesso ou exclusão dos seus dados informando o mesmo e-mail ou WhatsApp usado no agendamento.
+            </p>
+            <input
+              required
+              placeholder="Seu e-mail ou WhatsApp"
+              value={privacyContact}
+              onChange={(event) => setPrivacyContact(event.target.value)}
+            />
+            {privacyMessage && <small className="privacyMessage">{privacyMessage}</small>}
+            <button className="secondaryButton" type="submit">Solicitar privacidade</button>
+          </form>
+        )}
+      </>
+    )
+  }
+
   if (session.role === 'cliente' && publicProviderId && bookingService) {
     const activeProvider = bookingService.provider
-    const savedClient = getSavedClient(activeProvider.id)
     return (
       <main
         className="publicStorefront"
@@ -2660,291 +3619,11 @@ function App() {
           '--provider-bg': activeProvider.theme?.background,
         }}
       >
-        <div className="publicStorefrontInner">
-          <div className={`inviteHero ${activeProvider.theme?.style || 'profissional'}`}>
-            <div className="inviteLogo">
-              {activeProvider.logoUrl ? <img src={activeProvider.logoUrl} alt="" /> : <Store size={30} />}
-            </div>
-            <div>
-              <p className="eyebrow">{publicEntryType === 'loja' ? 'Loja do prestador' : 'Convite de agendamento'}</p>
-              <h2>{publicEntryType === 'loja' ? activeProvider.name : activeProvider.inviteTitle}</h2>
-              <p>{activeProvider.inviteMessage}</p>
-              <strong>{activeProvider.firstOffer}</strong>
-              {publicEntryType === 'loja' && (
-                <button
-                  className="storeCta"
-                  onClick={() => {
-                    trackAnalyticsEvent('visualizou_servico', bookingService)
-                    trackAnalyticsEvent('iniciou_agendamento', bookingService)
-                    window.location.hash = `agendar=${activeProvider.slug || activeProvider.id}`
-                    setPublicEntryType('agendar')
-                  }}
-                >
-                  Agendar agora
-                </button>
-              )}
-            </div>
-          </div>
-
-          <ClientServiceHistory
-            entries={clientServiceHistory}
-            formatDate={formatDate}
-            onRebook={rebookService}
-            providerId={activeProvider.id}
-          />
-
-          {activeProvider.about && (
-            <div className="panel aboutPanel">
-              <p className="eyebrow">Sobre</p>
-              <h3>{activeProvider.name}</h3>
-              {activeProvider.about.split('\n').filter((paragraph) => paragraph.trim()).map((paragraph, index) => (
-                <p key={index}>{paragraph}</p>
-              ))}
-            </div>
-          )}
-
-          {(publicEntryType === 'loja' || (publicEntryType === 'agendar' && (activeProvider.highlights.length > 0 || publicGeneralPhotos.length > 0))) && (
-            <div className="panel storeFront">
-              {activeProvider.highlights.length > 0 && (
-                <div className="chips">
-                  {activeProvider.highlights.map((highlight) => <span key={highlight}>{highlight}</span>)}
-                </div>
-              )}
-              {publicGeneralPhotos.length > 0 && (
-                <div className="publicGallery">
-                  {publicGeneralPhotos.map((photo) => (
-                    <figure key={photo.id}>
-                      <img src={photo.imageBase64} alt="" />
-                      {photo.caption && <figcaption>{photo.caption}</figcaption>}
-                    </figure>
-                  ))}
-                </div>
-              )}
-              {publicEntryType === 'loja' && (
-                <div className="providerList">
-                  {filteredServices.map((item) => {
-                    const servicePhoto = publicPhotos.find((photo) => photo.serviceId === item.id)
-                    return (
-                      <button
-                        className="provider serviceCardPublic"
-                        key={item.id}
-                        onClick={() => {
-                          trackAnalyticsEvent('visualizou_servico', item)
-                          trackAnalyticsEvent('iniciou_agendamento', item)
-                          setBookingForm({ ...bookingForm, serviceId: item.id, resourceId: '' })
-                          setSuccessMessage('')
-                          window.location.hash = `agendar=${item.provider.slug || item.provider.id}`
-                          setPublicEntryType('agendar')
-                        }}
-                      >
-                        {servicePhoto && <img src={servicePhoto.imageBase64} alt="" />}
-                        <strong>{item.name}</strong>
-                        <span>{item.description || item.provider.category}</span>
-                        <small>{formatServiceDuration(item)} • {formatServicePrice(item, item.provider.showPrices)}</small>
-                      </button>
-                    )
-                  })}
-                  {filteredServices.length === 0 && <span className="emptyState">Nenhum serviço encontrado.</span>}
-                </div>
-              )}
-            </div>
-          )}
-
-          {publicEntryType === 'agendar' && (
-            <div className="panel">
-              <div className="panelHeader">
-                <div>
-                  <p className="eyebrow">Portal do cliente</p>
-                  <h2>Escolha um serviço</h2>
-                </div>
-              </div>
-              <div className="providerList">
-                {filteredServices.map((item) => {
-                  const servicePhoto = publicPhotos.find((photo) => photo.serviceId === item.id)
-                  return (
-                    <button
-                      className={bookingForm.serviceId === item.id ? 'provider selected serviceCardPublic' : 'provider serviceCardPublic'}
-                      key={item.id}
-                      onClick={() => { trackAnalyticsEvent('visualizou_servico', item); trackAnalyticsEvent('iniciou_agendamento', item); setBookingForm({ ...bookingForm, serviceId: item.id, resourceId: '' }); setSuccessMessage('') }}
-                    >
-                      {servicePhoto && <img src={servicePhoto.imageBase64} alt="" />}
-                      <strong>{item.name}</strong>
-                      <span>{item.description || activeProvider.category}</span>
-                      <small>{formatServiceDuration(item)} • {formatServicePrice(item, item.provider.showPrices)}</small>
-                      <label className="checkLabel cartCheck" onClick={(event) => event.stopPropagation()}>
-                        <input
-                          type="checkbox"
-                          checked={bookingForm.cartServiceIds.includes(item.id)}
-                          onChange={() => toggleCartService(item.id)}
-                        />
-                        Também tenho interesse
-                      </label>
-                    </button>
-                  )
-                })}
-                {filteredServices.length === 0 && <span className="emptyState">Nenhum serviço encontrado.</span>}
-              </div>
-            </div>
-          )}
-
-          {publicEntryType === 'agendar' && (
-            <form className="panel form" data-booking-form onSubmit={createBooking} onFocusCapture={() => trackAnalyticsEvent('iniciou_agendamento', bookingService)}>
-              <div className="panelHeader compact">
-                <div>
-                  <p className="eyebrow">Novo agendamento</p>
-                  <h2>Solicitar horário</h2>
-                </div>
-                <Clock3 size={22} />
-              </div>
-
-              {bookingService && (
-                <div className="selectedService">
-                  <span>Serviço selecionado</span>
-                  <strong>{bookingService.name}</strong>
-                  <small>
-                    {formatServiceDuration(bookingService)} • {formatServicePrice(bookingService, bookingService.provider.showPrices)}
-                  </small>
-                </div>
-              )}
-
-              {cartServices.length > 0 && (
-                <div className="selectedService">
-                  <span>Também tem interesse em</span>
-                  {cartServices.map((item) => (
-                    <strong key={item.id}>{item.name}{item.provider.showPrices ? ` — ${formatServicePrice(item, true)}` : ''}</strong>
-                  ))}
-                </div>
-              )}
-
-              {successMessage && (
-                <div className="successNotice">
-                  <CheckCircle2 size={18} />
-                  <span>{successMessage}</span>
-                </div>
-              )}
-
-              {savedClient && (
-                <p className="privacyHint">
-                  Bem-vindo(a) de volta, {savedClient.name}!{' '}
-                  <button
-                    type="button"
-                    className="textButton"
-                    onClick={() => {
-                      clearSavedClient(activeProvider.id)
-                      setBookingForm({ ...bookingForm, client: '', contact: '' })
-                    }}
-                  >
-                    Não é você? Limpar dados salvos
-                  </button>
-                </p>
-              )}
-
-              <label>Nome do cliente
-                <input required value={bookingForm.client} onChange={(event) => setBookingForm({ ...bookingForm, client: event.target.value })} />
-              </label>
-              <label>E-mail ou WhatsApp
-                <input
-                  required
-                  value={bookingForm.contact}
-                  onChange={(event) => {
-                    const nextContact = event.target.value
-                    setBookingForm({
-                      ...bookingForm,
-                      contact: nextContact,
-                      consent: bookingForm.consent || hasExistingConsent(data, publicProviderId, nextContact),
-                    })
-                  }}
-                />
-              </label>
-              {publicResources.length > 0 && (
-                <div className="timePicker">
-                  <strong>Com quem</strong>
-                  <div>
-                    {publicResources.map((resource) => (
-                      <button
-                        className={bookingForm.resourceId === resource.id ? 'selected' : ''}
-                        key={resource.id}
-                        onClick={() => setBookingForm({ ...bookingForm, resourceId: resource.id, time: '' })}
-                        type="button"
-                      >
-                        {resource.name}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-              )}
-              <div className="inlineFields">
-                <label>Data
-                  <input required max={maxBookingDate} min={today} type="date" value={bookingForm.date} onChange={(event) => setBookingForm({ ...bookingForm, date: event.target.value })} />
-                </label>
-              </div>
-              <div className="timePicker">
-                <strong>Horário</strong>
-                <div>
-                  {availableTimes.map((slot) => (
-                    <button
-                      className={bookingForm.time === slot.time ? 'selected' : ''}
-                      disabled={!slot.available}
-                      key={slot.time}
-                      onClick={() => setBookingForm({ ...bookingForm, time: slot.time })}
-                      type="button"
-                    >
-                      {slot.time}
-                    </button>
-                  ))}
-                </div>
-              </div>
-              <label>Observações
-                <textarea value={bookingForm.notes} onChange={(event) => setBookingForm({ ...bookingForm, notes: event.target.value })} />
-              </label>
-              {data.settings.requireConsent && (
-                <>
-                  <label className="checkLabel">
-                    <input
-                      required
-                      type="checkbox"
-                      checked={bookingForm.consent}
-                      onChange={(event) => setBookingForm({ ...bookingForm, consent: event.target.checked })}
-                    />
-                    Autorizo o uso do meu nome e contato para gerenciar este atendimento, retornos e comunicações com este prestador.
-                  </label>
-                  <p className="privacyHint">
-                    {hasExistingConsent(data, publicProviderId, bookingForm.contact)
-                      ? 'Consentimento já registrado para esse contato com este prestador. Você pode revisar desmarcando a caixa acima.'
-                      : 'Seus dados ficam vinculados somente ao prestador deste link. Você pode solicitar acesso ou exclusão pelo canal de privacidade.'}
-                  </p>
-                </>
-              )}
-              <button className="primary" type="submit"><Plus size={18} /> Agendar</button>
-            </form>
-          )}
-
-          {publicEntryType === 'agendar' && data.settings.allowClientPrivacyRequest && (
-            <form className="panel privacyPanel" onSubmit={createPrivacyRequest}>
-              <div className="panelHeader compact">
-                <div>
-                  <p className="eyebrow">Privacidade</p>
-                  <h2>Dados do cliente</h2>
-                </div>
-                <Shield size={22} />
-              </div>
-              <p>
-                Solicite acesso ou exclusão dos seus dados informando o mesmo e-mail ou WhatsApp usado no agendamento.
-              </p>
-              <input
-                required
-                placeholder="Seu e-mail ou WhatsApp"
-                value={privacyContact}
-                onChange={(event) => setPrivacyContact(event.target.value)}
-              />
-              {privacyMessage && <small className="privacyMessage">{privacyMessage}</small>}
-              <button className="secondaryButton" type="submit">Solicitar privacidade</button>
-            </form>
-          )}
+        <div className={`publicStorefrontInner storefrontStyle-${activeProvider.theme?.style || 'profissional'} publicEntry-${publicEntryType}`}>
+          {renderPublicSections(false)}
 
           <footer className="publicStorefrontFooter">
-            {appearanceControl}
-            <button type="button" className="textButton" onClick={logout}>Sair da pré-visualização</button>
+            <button type="button" className="textButton" onClick={logout}>Voltar ao início</button>
           </footer>
         </div>
       </main>
@@ -2952,16 +3631,21 @@ function App() {
   }
 
   if (session.role === 'cliente' && publicProviderId && !bookingService) {
+    const unavailableProvider = data?.providers.find((item) => item.id === publicProviderId)
+    const isDraftLanding = unavailableProvider?.landingStatus === 'rascunho'
     return (
       <main className="publicStorefront">
-        <div className="publicStorefrontInner">
+        <div className={`publicStorefrontInner storefrontStyle-${unavailableProvider?.theme?.style || 'profissional'} publicEntry-${publicEntryType}`}>
           <div className="panel">
-            <p className="eyebrow">Agendamento indisponível</p>
-            <h2>Este prestador ainda não tem serviços disponíveis para agendamento.</h2>
+            <p className="eyebrow">{isDraftLanding ? 'Página ainda não publicada' : 'Agendamento indisponível'}</p>
+            <h2>
+              {isDraftLanding
+                ? 'Este prestador ainda está preparando a página. Volte em breve.'
+                : 'Este prestador ainda não tem serviços disponíveis para agendamento.'}
+            </h2>
           </div>
           <footer className="publicStorefrontFooter">
-            {appearanceControl}
-            <button type="button" className="textButton" onClick={logout}>Sair da pré-visualização</button>
+            <button type="button" className="textButton" onClick={logout}>Voltar ao início</button>
           </footer>
         </div>
       </main>
@@ -3177,6 +3861,14 @@ function App() {
           </div>
         ))}
 
+        {view === 'prestador' && provider?.landingStatus === 'rascunho' && (
+          <div className="unsavedBanner draftLandingBanner">
+            <AlertCircle size={16} />
+            <span><strong>Sua página está em rascunho — clientes não conseguem agendar.</strong> Ninguém vê sua loja nem consegue marcar horário enquanto ela não for publicada.</span>
+            <button type="button" className="secondaryButton compactButton" onClick={() => publishLandingNow(provider.id)}>Publicar agora</button>
+          </div>
+        )}
+
         {view === 'conta' && authUser && <AccountSecurity
           accountLoading={accountLoading}
           accountNotice={accountNotice}
@@ -3223,271 +3915,7 @@ function App() {
 
         {view === 'cliente' && (
           <section className="grid two">
-            <ClientServiceHistory
-              entries={clientServiceHistory}
-              formatDate={formatDate}
-              onRebook={rebookService}
-              providerId={publicProviderId}
-            />
-            {publicProviderId && bookingService && (
-              <div
-                className={`inviteHero ${bookingService.provider.theme?.style || 'profissional'}`}
-                style={{
-                  '--accent': bookingService.provider.theme?.accent || data.brand.accent,
-                  '--provider-accent': bookingService.provider.theme?.accent,
-                  '--provider-bg': bookingService.provider.theme?.background,
-                }}
-              >
-                <div className="inviteLogo">
-                  {bookingService.provider.logoUrl ? <img src={bookingService.provider.logoUrl} alt="" /> : <Store size={30} />}
-                </div>
-                <div>
-                  <p className="eyebrow">{publicEntryType === 'loja' ? 'Loja do prestador' : 'Convite de agendamento'}</p>
-                  <h2>{publicEntryType === 'loja' ? bookingService.provider.name : bookingService.provider.inviteTitle}</h2>
-                  <p>{bookingService.provider.inviteMessage}</p>
-                  <strong>{bookingService.provider.firstOffer}</strong>
-                  {publicEntryType === 'loja' && (
-                    <button
-                      className="storeCta"
-                      onClick={() => {
-                        trackAnalyticsEvent('visualizou_servico', bookingService)
-                        trackAnalyticsEvent('iniciou_agendamento', bookingService)
-                        window.location.hash = `agendar=${bookingService.provider.slug || bookingService.provider.id}`
-                        setPublicEntryType('agendar')
-                      }}
-                    >
-                      Agendar agora
-                    </button>
-                  )}
-                </div>
-              </div>
-            )}
-
-
-            {(publicEntryType === 'loja' || (publicEntryType === 'agendar' && (bookingService.provider.highlights.length > 0 || publicGeneralPhotos.length > 0))) && bookingService && (
-              <div className="panel storeFront">
-                {bookingService.provider.highlights.length > 0 && (
-                  <div className="chips">
-                    {bookingService.provider.highlights.map((highlight) => <span key={highlight}>{highlight}</span>)}
-                  </div>
-                )}
-                {publicGeneralPhotos.length > 0 && (
-                  <div className="publicGallery">
-                    {publicGeneralPhotos.map((photo) => (
-                      <figure key={photo.id}>
-                        <img src={photo.imageBase64} alt="" />
-                        {photo.caption && <figcaption>{photo.caption}</figcaption>}
-                      </figure>
-                    ))}
-                  </div>
-                )}
-                {publicEntryType === 'loja' && (
-                  <div className="providerList">
-                    {filteredServices.map((item) => {
-                      const servicePhoto = publicPhotos.find((photo) => photo.serviceId === item.id)
-                      return (
-                        <button
-                          className="provider serviceCardPublic"
-                          key={item.id}
-                          onClick={() => {
-                            trackAnalyticsEvent('visualizou_servico', item)
-                            trackAnalyticsEvent('iniciou_agendamento', item)
-                            setBookingForm({ ...bookingForm, serviceId: item.id, resourceId: '' })
-                            setSuccessMessage('')
-                            window.location.hash = `agendar=${item.provider.slug || item.provider.id}`
-                            setPublicEntryType('agendar')
-                          }}
-                        >
-                          {servicePhoto && <img src={servicePhoto.imageBase64} alt="" />}
-                          <strong>{item.name}</strong>
-                          <span>{item.description || item.provider.category}</span>
-                          <small>{formatServiceDuration(item)} • {formatServicePrice(item, item.provider.showPrices)}</small>
-                        </button>
-                      )
-                    })}
-                    {filteredServices.length === 0 && <span className="emptyState">Nenhum serviço encontrado.</span>}
-                  </div>
-                )}
-              </div>
-            )}
-            {publicEntryType === 'agendar' && <div className="panel">
-              <div className="panelHeader">
-                <div>
-                  <p className="eyebrow">Portal do cliente</p>
-                  <h2>{publicProviderId && !storeEntry ? 'Agende seu atendimento' : 'Escolha um serviço'}</h2>
-                </div>
-                {(!publicProviderId || storeEntry) && (
-                  <div className="search">
-                    <Search size={17} />
-                    <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Buscar serviço ou cidade" />
-                  </div>
-                )}
-              </div>
-
-              <div className="providerList">
-                {filteredServices.map((item) => {
-                  const servicePhoto = publicPhotos.find((photo) => photo.serviceId === item.id)
-                  return (
-                    <button
-                      className={bookingForm.serviceId === item.id ? 'provider selected serviceCardPublic' : 'provider serviceCardPublic'}
-                      key={item.id}
-                      onClick={() => { trackAnalyticsEvent('visualizou_servico', item); trackAnalyticsEvent('iniciou_agendamento', item); setBookingForm({ ...bookingForm, serviceId: item.id, resourceId: '' }); setSuccessMessage('') }}
-                    >
-                      {servicePhoto && <img src={servicePhoto.imageBase64} alt="" />}
-                      <strong>{item.name}</strong>
-                      <span>{item.provider.name} • {item.provider.category} • {item.provider.city}</span>
-                          <small>{formatServiceDuration(item)} • {formatServicePrice(item, item.provider.showPrices)}</small>
-                      <label className="checkLabel cartCheck" onClick={(event) => event.stopPropagation()}>
-                        <input
-                          type="checkbox"
-                          checked={bookingForm.cartServiceIds.includes(item.id)}
-                          onChange={() => toggleCartService(item.id)}
-                        />
-                        Também tenho interesse
-                      </label>
-                    </button>
-                  )
-                })}
-                {filteredServices.length === 0 && <span className="emptyState">Nenhum serviço encontrado.</span>}
-              </div>
-            </div>}
-
-            {publicEntryType === 'agendar' && <form className="panel form" data-booking-form onSubmit={createBooking} onFocusCapture={() => trackAnalyticsEvent('iniciou_agendamento', bookingService)}>
-              <div className="panelHeader compact">
-                <div>
-                  <p className="eyebrow">Novo agendamento</p>
-                  <h2>Solicitar horário</h2>
-                </div>
-                <Clock3 size={22} />
-              </div>
-
-              {bookingService && (
-                <div className="selectedService">
-                  <span>Serviço selecionado</span>
-                  <strong>{bookingService.provider.name} • {bookingService.name}</strong>
-                  <small>
-                    {bookingService.provider.category} • {bookingService.provider.city} • {formatServiceDuration(bookingService)} • {formatServicePrice(bookingService, bookingService.provider.showPrices)}
-                  </small>
-                </div>
-              )}
-
-              {cartServices.length > 0 && (
-                <div className="selectedService">
-                  <span>Também tem interesse em</span>
-                  {cartServices.map((item) => (
-                    <strong key={item.id}>{item.name}{item.provider.showPrices ? ` — ${formatServicePrice(item, true)}` : ''}</strong>
-                  ))}
-                </div>
-              )}
-
-              {successMessage && (
-                <div className="successNotice">
-                  <CheckCircle2 size={18} />
-                  <span>{successMessage}</span>
-                </div>
-              )}
-
-              <label>Nome do cliente
-                <input required value={bookingForm.client} onChange={(event) => setBookingForm({ ...bookingForm, client: event.target.value })} />
-              </label>
-              <label>E-mail ou WhatsApp
-                <input
-                  required
-                  value={bookingForm.contact}
-                  onChange={(event) => {
-                    const nextContact = event.target.value
-                    setBookingForm({
-                      ...bookingForm,
-                      contact: nextContact,
-                      consent: bookingForm.consent || hasExistingConsent(data, bookingService?.providerId, nextContact),
-                    })
-                  }}
-                />
-              </label>
-              {publicResources.length > 0 && (
-                <div className="timePicker">
-                  <strong>Com quem</strong>
-                  <div>
-                    {publicResources.map((resource) => (
-                      <button
-                        className={bookingForm.resourceId === resource.id ? 'selected' : ''}
-                        key={resource.id}
-                        onClick={() => setBookingForm({ ...bookingForm, resourceId: resource.id, time: '' })}
-                        type="button"
-                      >
-                        {resource.name}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-              )}
-              <div className="inlineFields">
-                <label>Data
-                  <input required max={maxBookingDate} min={today} type="date" value={bookingForm.date} onChange={(event) => setBookingForm({ ...bookingForm, date: event.target.value })} />
-                </label>
-              </div>
-              <div className="timePicker">
-                <strong>Horário</strong>
-                <div>
-                  {availableTimes.map((slot) => (
-                    <button
-                      className={bookingForm.time === slot.time ? 'selected' : ''}
-                      disabled={!slot.available}
-                      key={slot.time}
-                      onClick={() => setBookingForm({ ...bookingForm, time: slot.time })}
-                      type="button"
-                    >
-                      {slot.time}
-                    </button>
-                  ))}
-                </div>
-              </div>
-              <label>Observações
-                <textarea value={bookingForm.notes} onChange={(event) => setBookingForm({ ...bookingForm, notes: event.target.value })} />
-              </label>
-              {data.settings.requireConsent && (
-                <>
-                  <label className="checkLabel">
-                    <input
-                      required
-                      type="checkbox"
-                      checked={bookingForm.consent}
-                      onChange={(event) => setBookingForm({ ...bookingForm, consent: event.target.checked })}
-                    />
-                    Autorizo o uso do meu nome e contato para gerenciar este atendimento, retornos e comunicações com este prestador.
-                  </label>
-                  <p className="privacyHint">
-                    {hasExistingConsent(data, bookingService?.providerId, bookingForm.contact)
-                      ? 'Consentimento já registrado para esse contato com este prestador. Você pode revisar desmarcando a caixa acima.'
-                      : 'Seus dados ficam vinculados somente ao prestador deste link. Você pode solicitar acesso ou exclusão pelo canal de privacidade.'}
-                  </p>
-                </>
-              )}
-              <button className="primary" type="submit"><Plus size={18} /> Agendar</button>
-            </form>}
-
-            {publicEntryType === 'agendar' && data.settings.allowClientPrivacyRequest && (
-              <form className="panel privacyPanel" onSubmit={createPrivacyRequest}>
-                <div className="panelHeader compact">
-                  <div>
-                    <p className="eyebrow">Privacidade</p>
-                    <h2>Dados do cliente</h2>
-                  </div>
-                  <Shield size={22} />
-                </div>
-                <p>
-                  Solicite acesso ou exclusão dos seus dados informando o mesmo e-mail ou WhatsApp usado no agendamento.
-                </p>
-                <input
-                  required
-                  placeholder="Seu e-mail ou WhatsApp"
-                  value={privacyContact}
-                  onChange={(event) => setPrivacyContact(event.target.value)}
-                />
-                {privacyMessage && <small className="privacyMessage">{privacyMessage}</small>}
-                <button className="secondaryButton" type="submit">Solicitar privacidade</button>
-              </form>
-            )}
+            {renderPublicSections(true)}
           </section>
         )}
 
@@ -3519,8 +3947,9 @@ function App() {
                 <div className="profileTabs" role="tablist" aria-label="Seções do perfil do prestador">
                   <button type="button" className={providerProfileTab === 'identidade' ? 'active' : ''} onClick={() => setProviderProfileTab('identidade')}>Identidade</button>
                   <button type="button" className={providerProfileTab === 'vitrine' ? 'active' : ''} onClick={() => setProviderProfileTab('vitrine')}>Vitrine</button>
-                  <button type="button" className={providerProfileTab === 'convite' ? 'active' : ''} onClick={() => setProviderProfileTab('convite')}>Convite</button>
                   <button type="button" className={providerProfileTab === 'recursos' ? 'active' : ''} onClick={() => setProviderProfileTab('recursos')}>Recursos</button>
+                  <button type="button" className={providerProfileTab === 'conversao' ? 'active' : ''} onClick={() => setProviderProfileTab('conversao')}>Convencer o cliente</button>
+                  <button type="button" className={providerProfileTab === 'convite' ? 'active' : ''} onClick={() => setProviderProfileTab('convite')}>Convite</button>
                 </div>
 
                 {providerProfileTab === 'identidade' && (
@@ -3560,7 +3989,7 @@ function App() {
                         </button>
                       )}
                     </div>
-                    <div className="themeEditor">
+                    <div className="themeEditor identityThemeEditor">
                       <label>Cor principal
                         <input
                           type="color"
@@ -3576,15 +4005,81 @@ function App() {
                         />
                       </label>
                       <label>Estilo
+                        <div className="choiceGroup" role="radiogroup" aria-label="Estilo da landing">
+                          {[
+                            ['profissional', 'Profissional'],
+                            ['acolhedor', 'Acolhedor'],
+                            ['premium', 'Premium'],
+                          ].map(([value, label]) => (
+                            <button
+                              aria-checked={(inviteDraft.theme?.style || 'profissional') === value}
+                              className={(inviteDraft.theme?.style || 'profissional') === value ? 'active' : ''}
+                              key={value}
+                              onClick={() => updateThemeDraft(provider.id, 'style', value)}
+                              role="radio"
+                              type="button"
+                            >
+                              {label}
+                            </button>
+                          ))}
+                        </div>
+                      </label>
+                      <label>Tema público
                         <select
-                          value={inviteDraft.theme?.style || 'profissional'}
-                          onChange={(event) => updateThemeDraft(provider.id, 'style', event.target.value)}
+                          value={inviteDraft.theme?.publicAppearance || 'system'}
+                          onChange={(event) => updateThemeDraft(provider.id, 'publicAppearance', event.target.value)}
                         >
-                          <option value="profissional">Profissional</option>
-                          <option value="acolhedor">Acolhedor</option>
-                          <option value="premium">Premium</option>
+                          <option value="system">Automático</option>
+                          <option value="light">Claro</option>
+                          <option value="dark">Escuro</option>
                         </select>
                       </label>
+                    </div>
+                    <div className="highlightEditor identityPublishBox">
+                      <div>
+                        <p className="eyebrow">Publicacao</p>
+                        <h3>Status da pagina</h3>
+                      </div>
+                      <label>Sua pagina esta
+                        <div className="choiceGroup" role="radiogroup" aria-label="Sua pagina esta">
+                          {LANDING_STATUS_OPTIONS.map(([value, label]) => (
+                            <button
+                              aria-checked={(inviteDraft.landingStatus || 'rascunho') === value}
+                              className={(inviteDraft.landingStatus || 'rascunho') === value ? 'active' : ''}
+                              key={value}
+                              onClick={() => updateInviteDraft(provider.id, 'landingStatus', value)}
+                              role="radio"
+                              type="button"
+                            >
+                              {label}
+                            </button>
+                          ))}
+                        </div>
+                      </label>
+                      <div className="identitySeoBlock">
+                        <div>
+                          <p className="eyebrow">Busca no Google</p>
+                          <h3>Como a pagina aparece nos resultados</h3>
+                        </div>
+                        <div className="inlineFields">
+                          <label>Titulo para busca
+                            <input
+                              maxLength="70"
+                              placeholder={`${inviteDraft.name || provider.name} | Agendamento`}
+                              value={inviteDraft.seoTitle || ''}
+                              onChange={(event) => updateInviteDraft(provider.id, 'seoTitle', event.target.value)}
+                            />
+                          </label>
+                          <label>Descricao para busca
+                            <input
+                              maxLength="160"
+                              placeholder="Resumo curto do atendimento, cidade e diferencial."
+                              value={inviteDraft.seoDescription || ''}
+                              onChange={(event) => updateInviteDraft(provider.id, 'seoDescription', event.target.value)}
+                            />
+                          </label>
+                        </div>
+                      </div>
                     </div>
                   </>
                 )}
@@ -3603,6 +4098,86 @@ function App() {
                         onChange={(event) => updateInviteDraft(provider.id, 'about', event.target.value)}
                       />
                     </label>
+
+                    <div className="highlightEditor">
+                      <div>
+                        <p className="eyebrow">Local e atendimento</p>
+                        <h3>Onde o cliente será atendido</h3>
+                      </div>
+                      <div className="inlineFields">
+                        <label>Bairro
+                          <input
+                            placeholder="Ex.: Savassi"
+                            value={inviteDraft.neighborhood || ''}
+                            onChange={(event) => updateInviteDraft(provider.id, 'neighborhood', event.target.value)}
+                          />
+                        </label>
+                        <label>Modo de atendimento
+                          <select
+                            value={inviteDraft.serviceMode || 'presencial_online'}
+                            onChange={(event) => updateInviteDraft(provider.id, 'serviceMode', event.target.value)}
+                          >
+                            {SERVICE_MODE_OPTIONS.map(([value, label]) => <option key={value} value={value}>{label}</option>)}
+                          </select>
+                        </label>
+                      </div>
+                      <label>Endereço ou referência
+                        <input
+                          placeholder="Rua, número, complemento ou referência de atendimento"
+                          value={inviteDraft.address || ''}
+                          onChange={(event) => updateInviteDraft(provider.id, 'address', event.target.value)}
+                        />
+                      </label>
+                    </div>
+                    <div className="serviceEditor">
+                      <div className="sectionTools">
+                        <div>
+                          <h3>Banners</h3>
+                          <span className="sectionSub">O primeiro banner da lista aparece como imagem de abertura da pagina publica. Use a ordem pra decidir qual fica em destaque.</span>
+                        </div>
+                        <label className="photoUpload inlineUpload"><Image size={18} /> Adicionar banner
+                          <input accept="image/*" type="file" onChange={(event) => uploadPortfolioPhoto(null, event.target.files?.[0], 'banner')} />
+                        </label>
+                      </div>
+                      <div className="photoStrip">
+                        {providerBannerPhotos.map((photo, index, list) => (
+                          <div className="photoTile" key={photo.id}>
+                            <img src={photo.imageBase64} alt="" />
+                            <input placeholder="Legenda" value={photo.caption} onChange={(event) => updatePortfolioPhotoCaption(photo.id, event.target.value)} />
+                            <div className="photoTileActions">
+                              <button type="button" title="Mover para cima" aria-label="Mover para cima" disabled={index === 0} onClick={() => movePortfolioPhoto(photo.id, -1)}><ArrowUp size={14} /></button>
+                              <button type="button" title="Mover para baixo" aria-label="Mover para baixo" disabled={index === list.length - 1} onClick={() => movePortfolioPhoto(photo.id, 1)}><ArrowDown size={14} /></button>
+                              <button className="dangerButton" type="button" onClick={() => removePortfolioPhoto(photo.id)}><Trash2 size={14} /></button>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+
+                    <div className="serviceEditor">
+                      <div className="sectionTools">
+                        <div>
+                          <h3>Fotos da vitrine</h3>
+                          <span className="sectionSub">Aparecem na sua página pública, junto com o texto acima. Use a ordem pra decidir qual aparece primeiro.</span>
+                        </div>
+                        <label className="photoUpload inlineUpload"><Image size={18} /> Adicionar foto
+                          <input accept="image/*" type="file" onChange={(event) => uploadPortfolioPhoto(null, event.target.files?.[0])} />
+                        </label>
+                      </div>
+                      <div className="photoStrip">
+                        {providerGeneralPhotos.map((photo, index, list) => (
+                          <div className="photoTile" key={photo.id}>
+                            <img src={photo.imageBase64} alt="" />
+                            <input placeholder="Legenda" value={photo.caption} onChange={(event) => updatePortfolioPhotoCaption(photo.id, event.target.value)} />
+                            <div className="photoTileActions">
+                              <button type="button" title="Mover para cima" aria-label="Mover para cima" disabled={index === 0} onClick={() => movePortfolioPhoto(photo.id, -1)}><ArrowUp size={14} /></button>
+                              <button type="button" title="Mover para baixo" aria-label="Mover para baixo" disabled={index === list.length - 1} onClick={() => movePortfolioPhoto(photo.id, 1)}><ArrowDown size={14} /></button>
+                              <button className="dangerButton" type="button" onClick={() => removePortfolioPhoto(photo.id)}><Trash2 size={14} /></button>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
 
                     <div className="highlightEditor">
                       <div>
@@ -3635,6 +4210,40 @@ function App() {
                       </form>
                     </div>
 
+                    <div className="highlightEditor">
+                      <div>
+                        <p className="eyebrow">Mais fotos</p>
+                        <h3>Fotos que já estão na internet</h3>
+                      </div>
+                      <p className="privacyHint">
+                        Aqui você cola o <strong>link</strong> de uma foto que já esteja publicada em algum lugar (por exemplo, uma foto do seu perfil do Instagram ou do Google Fotos) — não é upload direto de arquivo. Pra enviar uma foto do seu computador ou celular direto, use "Fotos da vitrine" logo acima.
+                      </p>
+                      <div className="faqEditorList">
+                        {(inviteDraft.galleryPhotos || []).map((photo, index) => (
+                          <div className="faqEditorItem" key={`${photo.url}-${index}`}>
+                            <input
+                              placeholder="Cole aqui o link da foto (ex.: https://...)"
+                              value={photo.url || ''}
+                              onChange={(event) => updateInviteDraft(provider.id, 'galleryPhotos', (inviteDraft.galleryPhotos || []).map((item, itemIndex) => itemIndex === index ? { ...item, url: event.target.value } : item))}
+                            />
+                            <input
+                              placeholder="Legenda curta"
+                              value={photo.caption || ''}
+                              onChange={(event) => updateInviteDraft(provider.id, 'galleryPhotos', (inviteDraft.galleryPhotos || []).map((item, itemIndex) => itemIndex === index ? { ...item, caption: event.target.value } : item))}
+                            />
+                            <button className="dangerButton" type="button" title="Remover imagem" aria-label="Remover imagem" onClick={() => updateInviteDraft(provider.id, 'galleryPhotos', (inviteDraft.galleryPhotos || []).filter((_, itemIndex) => itemIndex !== index))}><Trash2 size={16} /></button>
+                          </div>
+                        ))}
+                      </div>
+                      <button
+                        className="secondaryButton compactButton"
+                        type="button"
+                        onClick={() => updateInviteDraft(provider.id, 'galleryPhotos', [...(inviteDraft.galleryPhotos || []), { url: '', caption: '' }])}
+                      >
+                        <Plus size={16} /> Adicionar imagem
+                      </button>
+                    </div>
+
                     <label className="checkLabel">
                       <input
                         type="checkbox"
@@ -3659,6 +4268,248 @@ function App() {
                           Copiar loja
                         </button>
                       </div>
+                    </div>
+                  </>
+                )}
+
+                {providerProfileTab === 'conversao' && (
+                  <>
+                    <div>
+                      <p className="eyebrow">Convencer o cliente</p>
+                      <h3>Textos e informações que ajudam a fechar o agendamento</h3>
+                    </div>
+                    <div className="inlineFields">
+                      <label>Subtítulo da página
+                        <input
+                          maxLength="120"
+                          placeholder="Ex.: Atendimento personalizado para resolver com clareza e agilidade."
+                          value={inviteDraft.landingSubtitle || ''}
+                          onChange={(event) => updateInviteDraft(provider.id, 'landingSubtitle', event.target.value)}
+                        />
+                      </label>
+                      <label>Texto do botão principal
+                        <input
+                          maxLength="32"
+                          placeholder="Ex.: Quero agendar"
+                          value={inviteDraft.ctaLabel || 'Agendar agora'}
+                          onChange={(event) => updateInviteDraft(provider.id, 'ctaLabel', event.target.value)}
+                        />
+                      </label>
+                    </div>
+
+                    <div className="inlineFields">
+                      <label>WhatsApp comercial
+                        <input
+                          placeholder="Ex.: 5531999999999"
+                          value={inviteDraft.contactChannels?.whatsapp || ''}
+                          onChange={(event) => updateInviteDraft(provider.id, 'contactChannels', { ...(inviteDraft.contactChannels || {}), whatsapp: event.target.value })}
+                        />
+                      </label>
+                      <label>Instagram
+                        <input
+                          placeholder="Ex.: @minhaloja"
+                          value={inviteDraft.contactChannels?.instagram || ''}
+                          onChange={(event) => updateInviteDraft(provider.id, 'contactChannels', { ...(inviteDraft.contactChannels || {}), instagram: event.target.value })}
+                        />
+                      </label>
+                    </div>
+
+                    <div className="highlightEditor">
+                      <div>
+                        <p className="eyebrow">Selos de confiança</p>
+                        <h3>Credenciais rápidas</h3>
+                      </div>
+                      <div className="chips">
+                        {(inviteDraft.trustBadges || []).map((badge) => (
+                          <button key={badge} type="button" onClick={() => updateInviteDraft(provider.id, 'trustBadges', inviteDraft.trustBadges.filter((item) => item !== badge))}>
+                            {badge} <Trash2 size={14} />
+                          </button>
+                        ))}
+                      </div>
+                      <form
+                        className="inlineAdd"
+                        onSubmit={(event) => {
+                          event.preventDefault()
+                          const value = event.currentTarget.elements.badge.value.trim()
+                          if (!value) return
+                          updateInviteDraft(provider.id, 'trustBadges', [...(inviteDraft.trustBadges || []), value])
+                          event.currentTarget.reset()
+                        }}
+                      >
+                        <input name="badge" maxLength="40" placeholder="Ex.: Atendimento certificado" />
+                        <button type="submit">Adicionar</button>
+                      </form>
+                    </div>
+
+                    <div className="highlightEditor">
+                      <div>
+                        <p className="eyebrow">Resultados</p>
+                        <h3>Resultados e depoimentos curtos</h3>
+                      </div>
+                      <label>Título da seção
+                        <input
+                          maxLength="80"
+                          placeholder="Ex.: Por que clientes escolhem nossa loja"
+                          value={inviteDraft.proofTitle || ''}
+                          onChange={(event) => updateInviteDraft(provider.id, 'proofTitle', event.target.value)}
+                        />
+                      </label>
+                      <div className="chips">
+                        {(inviteDraft.proofItems || []).map((proof) => (
+                          <button key={proof} type="button" onClick={() => updateInviteDraft(provider.id, 'proofItems', inviteDraft.proofItems.filter((item) => item !== proof))}>
+                            {proof} <Trash2 size={14} />
+                          </button>
+                        ))}
+                      </div>
+                      <form
+                        className="inlineAdd"
+                        onSubmit={(event) => {
+                          event.preventDefault()
+                          const value = event.currentTarget.elements.proof.value.trim()
+                          if (!value) return
+                          updateInviteDraft(provider.id, 'proofItems', [...(inviteDraft.proofItems || []), value])
+                          event.currentTarget.reset()
+                        }}
+                      >
+                        <input name="proof" maxLength="90" placeholder="Ex.: Mais de 200 atendimentos realizados" />
+                        <button type="submit">Adicionar</button>
+                      </form>
+                    </div>
+
+                    <div className="highlightEditor">
+                      <div>
+                        <p className="eyebrow">Depoimentos de clientes</p>
+                        <h3>O que seus clientes disseram sobre você</h3>
+                      </div>
+                      <div className="faqEditorList">
+                        {(inviteDraft.testimonials || []).map((item, index) => (
+                          <div className="faqEditorItem" key={`${item.name}-${index}`}>
+                            <input
+                              placeholder="Nome do cliente"
+                              value={item.name || ''}
+                              onChange={(event) => updateInviteDraft(provider.id, 'testimonials', (inviteDraft.testimonials || []).map((testimonial, testimonialIndex) => testimonialIndex === index ? { ...testimonial, name: event.target.value } : testimonial))}
+                            />
+                            <input
+                              placeholder="Link da foto do cliente (opcional)"
+                              value={item.photoUrl || ''}
+                              onChange={(event) => updateInviteDraft(provider.id, 'testimonials', (inviteDraft.testimonials || []).map((testimonial, testimonialIndex) => testimonialIndex === index ? { ...testimonial, photoUrl: event.target.value } : testimonial))}
+                            />
+                            <input
+                              max="5"
+                              min="1"
+                              placeholder="Nota (1 a 5)"
+                              type="number"
+                              value={item.rating || 5}
+                              onChange={(event) => updateInviteDraft(provider.id, 'testimonials', (inviteDraft.testimonials || []).map((testimonial, testimonialIndex) => testimonialIndex === index ? { ...testimonial, rating: Number(event.target.value) } : testimonial))}
+                            />
+                            <textarea
+                              placeholder="Depoimento"
+                              value={item.text || ''}
+                              onChange={(event) => updateInviteDraft(provider.id, 'testimonials', (inviteDraft.testimonials || []).map((testimonial, testimonialIndex) => testimonialIndex === index ? { ...testimonial, text: event.target.value } : testimonial))}
+                            />
+                            <button className="dangerButton" type="button" title="Remover depoimento" aria-label="Remover depoimento" onClick={() => updateInviteDraft(provider.id, 'testimonials', (inviteDraft.testimonials || []).filter((_, testimonialIndex) => testimonialIndex !== index))}><Trash2 size={16} /></button>
+                          </div>
+                        ))}
+                      </div>
+                      <button
+                        className="secondaryButton compactButton"
+                        type="button"
+                        onClick={() => updateInviteDraft(provider.id, 'testimonials', [...(inviteDraft.testimonials || []), { name: '', photoUrl: '', rating: 5, text: '' }])}
+                      >
+                        <Plus size={16} /> Adicionar depoimento
+                      </button>
+                    </div>
+
+                    <div className="highlightEditor">
+                      <div>
+                        <p className="eyebrow">Obrigado</p>
+                        <h3>Página após agendamento</h3>
+                      </div>
+                      <div className="inlineFields">
+                        <label>Título de confirmação
+                          <input
+                            maxLength="80"
+                            value={inviteDraft.thankYouTitle || ''}
+                            onChange={(event) => updateInviteDraft(provider.id, 'thankYouTitle', event.target.value)}
+                          />
+                        </label>
+                        <label>Mensagem de confirmação
+                          <input
+                            maxLength="180"
+                            value={inviteDraft.thankYouMessage || ''}
+                            onChange={(event) => updateInviteDraft(provider.id, 'thankYouMessage', event.target.value)}
+                          />
+                        </label>
+                      </div>
+                    </div>
+
+                    <div className="highlightEditor">
+                      <div>
+                        <p className="eyebrow">Rastreamento</p>
+                        <h3>Meta Pixel e Google Tag</h3>
+                      </div>
+                      <div className="inlineFields">
+                        <label>Meta Pixel ID
+                          <input
+                            placeholder="Ex.: 1234567890"
+                            value={inviteDraft.metaPixelId || ''}
+                            onChange={(event) => updateInviteDraft(provider.id, 'metaPixelId', event.target.value)}
+                          />
+                        </label>
+                        <label>Google Tag ID
+                          <input
+                            placeholder="Ex.: G-XXXXXXXXXX ou AW-XXXXXXXXX"
+                            value={inviteDraft.googleTagId || ''}
+                            onChange={(event) => updateInviteDraft(provider.id, 'googleTagId', event.target.value)}
+                          />
+                        </label>
+                      </div>
+                    </div>
+
+                    <div className="highlightEditor">
+                      <div>
+                        <p className="eyebrow">Politica e termos</p>
+                        <h3>Regras visiveis na landing</h3>
+                      </div>
+                      <label>Texto legal do prestador
+                        <textarea
+                          className="aboutField"
+                          placeholder="Informe regras de atendimento, cancelamento, uso de dados e canais de privacidade."
+                          value={inviteDraft.termsText || ''}
+                          onChange={(event) => updateInviteDraft(provider.id, 'termsText', event.target.value)}
+                        />
+                      </label>
+                    </div>
+
+                    <div className="highlightEditor">
+                      <div>
+                        <p className="eyebrow">FAQ</p>
+                        <h3>Perguntas frequentes</h3>
+                      </div>
+                      <div className="faqEditorList">
+                        {(inviteDraft.faqItems || []).map((item, index) => (
+                          <div className="faqEditorItem" key={`${item.question}-${index}`}>
+                            <input
+                              placeholder="Pergunta"
+                              value={item.question || ''}
+                              onChange={(event) => updateInviteDraft(provider.id, 'faqItems', inviteDraft.faqItems.map((faq, faqIndex) => faqIndex === index ? { ...faq, question: event.target.value } : faq))}
+                            />
+                            <textarea
+                              placeholder="Resposta curta"
+                              value={item.answer || ''}
+                              onChange={(event) => updateInviteDraft(provider.id, 'faqItems', inviteDraft.faqItems.map((faq, faqIndex) => faqIndex === index ? { ...faq, answer: event.target.value } : faq))}
+                            />
+                            <button className="dangerButton" type="button" title="Remover pergunta" aria-label="Remover pergunta" onClick={() => updateInviteDraft(provider.id, 'faqItems', inviteDraft.faqItems.filter((_, faqIndex) => faqIndex !== index))}><Trash2 size={16} /></button>
+                          </div>
+                        ))}
+                      </div>
+                      <button
+                        className="secondaryButton compactButton"
+                        type="button"
+                        onClick={() => updateInviteDraft(provider.id, 'faqItems', [...(inviteDraft.faqItems || []), { question: '', answer: '' }])}
+                      >
+                        <Plus size={16} /> Adicionar pergunta
+                      </button>
                     </div>
                   </>
                 )}
@@ -3728,6 +4579,13 @@ function App() {
                         onChange={(event) => updateInviteDraft(provider.id, 'firstOffer', event.target.value)}
                       />
                     </label>
+                    <label>Política e termos visíveis
+                      <textarea
+                        placeholder="Condições de atendimento, remarcação, cancelamento, privacidade e observações importantes para o cliente."
+                        value={inviteDraft.termsText || ''}
+                        onChange={(event) => updateInviteDraft(provider.id, 'termsText', event.target.value)}
+                      />
+                    </label>
                   </>
                 )}
 
@@ -3776,6 +4634,181 @@ function App() {
                   ) : (
                     savedNotice && <span>{savedNotice}</span>
                   )}
+                </div>
+
+                <div className={`landingPreview ${inviteDraft.theme?.publicAppearance || 'system'} previewTab-${providerProfileTab}`}>
+                  <div className="landingPreviewHeader">
+                    <div>
+                      <p className="eyebrow">Prévia da landing</p>
+                      <h3>Seção atual da página</h3>
+                    </div>
+                    <a href={getStoreLink(provider)} target="_blank" rel="noreferrer">Abrir link real</a>
+                  </div>
+                  <div
+                    className={`landingPreviewCanvas ${inviteDraft.theme?.style || 'profissional'}`}
+                    style={{
+                      '--provider-accent': inviteDraft.theme?.accent || data.brand.accent,
+                      '--provider-bg': inviteDraft.theme?.background || '#111827',
+                    }}
+                  >
+                    <div className="landingPreviewHero previewIdentity previewConversao previewConvite">
+                      <div className="inviteLogo">
+                        {inviteDraft.logoUrl ? <img src={inviteDraft.logoUrl} alt="" /> : <Store size={24} />}
+                      </div>
+                      <div>
+                        <span>{inviteDraft.category || 'Categoria'}</span>
+                        <h4>{inviteDraft.name || provider.name}</h4>
+                        {inviteDraft.landingSubtitle && <p className="landingSubtitle">{inviteDraft.landingSubtitle}</p>}
+                        <p>{inviteDraft.inviteMessage || 'Mensagem de boas-vindas da loja.'}</p>
+                        {inviteDraft.firstOffer && <strong>{inviteDraft.firstOffer}</strong>}
+                        {(inviteDraft.trustBadges || []).length > 0 && (
+                          <div className="trustBadges">
+                            {inviteDraft.trustBadges.slice(0, 3).map((badge) => <span key={badge}>{badge}</span>)}
+                          </div>
+                        )}
+                        <button type="button">{inviteDraft.ctaLabel || 'Agendar agora'}</button>
+                      </div>
+                    </div>
+
+                    {inviteDraft.about && <p className="landingPreviewText previewVitrine">{inviteDraft.about}</p>}
+
+                    {(inviteDraft.neighborhood || inviteDraft.address || inviteDraft.serviceMode) && (
+                      <div className="landingPreviewBlock previewVitrine">
+                        <strong>Atendimento</strong>
+                        <div className="locationGrid">
+                          {inviteDraft.neighborhood && <span><strong>Bairro</strong>{inviteDraft.neighborhood}</span>}
+                          {inviteDraft.address && <span><strong>Endereco</strong>{inviteDraft.address}</span>}
+                          {inviteDraft.serviceMode && <span><strong>Formato</strong>{SERVICE_MODE_OPTIONS.find(([value]) => value === inviteDraft.serviceMode)?.[1] || inviteDraft.serviceMode}</span>}
+                        </div>
+                      </div>
+                    )}
+
+                    {previewHeroBannerUrl && (
+                      <figure className="publicHeroBanner previewVitrine">
+                        <img src={previewHeroBannerUrl} alt="" />
+                      </figure>
+                    )}
+
+                    {providerBannerPhotos.length > 0 && (
+                      <div className="publicBanners previewVitrine">
+                        {providerBannerPhotos.map((photo) => (
+                          <figure key={photo.id}>
+                            <img src={photo.imageBase64} alt="" />
+                            {photo.caption && <figcaption>{photo.caption}</figcaption>}
+                          </figure>
+                        ))}
+                      </div>
+                    )}
+
+                    {(inviteDraft.galleryPhotos || []).filter((photo) => photo.url).length > 0 && (
+                      <div className="publicGallery previewVitrine">
+                        {(inviteDraft.galleryPhotos || []).filter((photo) => photo.url).map((photo, index) => (
+                          <figure key={`${photo.url}-${index}`}>
+                            <img src={photo.url} alt="" />
+                            {photo.caption && <figcaption>{photo.caption}</figcaption>}
+                          </figure>
+                        ))}
+                      </div>
+                    )}
+
+                    {providerGeneralPhotos.length > 0 && (
+                      <div className="publicGallery previewVitrine">
+                        {providerGeneralPhotos.map((photo) => (
+                          <figure key={photo.id}>
+                            <img src={photo.imageBase64} alt="" />
+                            {photo.caption && <figcaption>{photo.caption}</figcaption>}
+                          </figure>
+                        ))}
+                      </div>
+                    )}
+
+                    {(inviteDraft.highlights || []).length > 0 && (
+                      <div className="chips previewVitrine">
+                        {inviteDraft.highlights.slice(0, 4).map((highlight) => <span key={highlight}>{highlight}</span>)}
+                      </div>
+                    )}
+
+                    <div className="landingPreviewBlock previewRecursos">
+                      <strong>Escolha um serviço</strong>
+                      <div className="providerList previewServiceList">
+                        {providerServices.slice(0, 3).map((service) => (
+                          <article className="provider serviceCardPublic" key={service.id}>
+                            <strong>{service.name}</strong>
+                            <span>{service.description || inviteDraft.category || 'Serviço'}</span>
+                            <small>{formatServiceDuration(service)}</small>
+                            <span className="priceTag">{formatServicePrice(service, inviteDraft.showPrices)}</span>
+                          </article>
+                        ))}
+                        {providerServices.length === 0 && <span className="emptyState">Nenhum serviço cadastrado.</span>}
+                      </div>
+                    </div>
+
+                    {providerResources.length > 0 && (
+                      <div className="landingPreviewBlock previewRecursos">
+                        <strong>Equipe e estrutura</strong>
+                        <div className="publicResourceGrid">
+                          {providerResources.slice(0, 3).map((resource) => (
+                            <article key={resource.id}>
+                              <strong>{resource.name}</strong>
+                              {resource.bio && <p>{resource.bio}</p>}
+                            </article>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
+                    {(inviteDraft.proofItems || []).length > 0 && (
+                      <div className="landingPreviewBlock previewConversao">
+                        <strong>{inviteDraft.proofTitle || 'Por que escolher este atendimento'}</strong>
+                        <div className="proofGrid">
+                          {inviteDraft.proofItems.slice(0, 3).map((proof) => <span key={proof}>{proof}</span>)}
+                        </div>
+                      </div>
+                    )}
+
+                    {(inviteDraft.testimonials || []).filter((item) => item.name || item.text).length > 0 && (
+                      <div className="landingPreviewBlock previewConversao">
+                        <strong>Depoimentos</strong>
+                        <div className="testimonialGrid">
+                          {(inviteDraft.testimonials || []).filter((item) => item.name || item.text).slice(0, 2).map((item, index) => (
+                            <article key={`${item.name}-${index}`}>
+                              {item.photoUrl && <img src={item.photoUrl} alt="" />}
+                              <strong>{item.name || 'Cliente'}</strong>
+                              <span>Nota {Math.max(1, Math.min(5, Number(item.rating || 5)))}/5</span>
+                              {item.text && <p>{item.text}</p>}
+                            </article>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
+                    {(inviteDraft.thankYouTitle || inviteDraft.thankYouMessage) && (
+                      <div className="landingPreviewBlock previewConversao">
+                        <strong>{inviteDraft.thankYouTitle || 'Solicitacao recebida'}</strong>
+                        <p>{inviteDraft.thankYouMessage || 'Mensagem exibida apos o envio do agendamento.'}</p>
+                      </div>
+                    )}
+
+                    {(inviteDraft.faqItems || []).filter((item) => item.question || item.answer).length > 0 && (
+                      <div className="landingPreviewBlock previewConversao">
+                        <strong>Perguntas frequentes</strong>
+                        {(inviteDraft.faqItems || []).filter((item) => item.question || item.answer).slice(0, 2).map((item, index) => (
+                          <details key={`${item.question}-${index}`}>
+                            <summary>{item.question || 'Pergunta'}</summary>
+                            {item.answer && <p>{item.answer}</p>}
+                          </details>
+                        ))}
+                      </div>
+                    )}
+
+                    {inviteDraft.termsText && (
+                      <div className="landingPreviewBlock previewConvite">
+                        <strong>Política e termos</strong>
+                        <p>{inviteDraft.termsText}</p>
+                      </div>
+                    )}
+
+                  </div>
                 </div>
               </div>
               </>
@@ -3867,7 +4900,11 @@ function App() {
                             {' • '}{booking.contact}
                           </span>
                           <small>{booking.notes || 'Sem observações'}</small>
-                          {booking.extraServices && <small>Também tem interesse em: {booking.extraServices}</small>}
+                          {booking.extraServices && (
+                            <div className="chips bookingExtraServices">
+                              {booking.extraServices.split(', ').map((name) => <span key={name}>{name}</span>)}
+                            </div>
+                          )}
                         </div>
                         <div className="statusPills" role="group" aria-label="Status do agendamento">
                           {[
@@ -3914,18 +4951,18 @@ function App() {
                             <label>Nome
                               <input value={service.name} onChange={(event) => updateProviderService(service.id, 'name', event.target.value)} />
                             </label>
-                            <label>Preço
+                            <label>Preço (R$)
                               <input type="number" min="0" value={service.price} onChange={(event) => updateProviderService(service.id, 'price', Number(event.target.value))} />
                             </label>
-                            <label>Modo
+                            <label>Como cobrar
                               <select value={service.priceMode} onChange={(event) => updateProviderService(service.id, 'priceMode', event.target.value)}>
-                                <option value="fixo">Fixo</option>
-                                <option value="a_partir_de">A partir de</option>
-                                <option value="sob_consulta">Sob consulta</option>
+                                <option value="fixo">Preço fixo</option>
+                                <option value="a_partir_de">A partir de (pode variar)</option>
+                                <option value="sob_consulta">Combinar com o cliente</option>
                               </select>
                             </label>
-                            <label>Duração
-                              <input type="number" min="0" placeholder="Variável" value={service.duration || ''} onChange={(event) => updateProviderService(service.id, 'duration', event.target.value ? Number(event.target.value) : null)} />
+                            <label>Duração (minutos)
+                              <input type="number" min="0" placeholder="Varia conforme o caso" value={service.duration || ''} onChange={(event) => updateProviderService(service.id, 'duration', event.target.value ? Number(event.target.value) : null)} />
                             </label>
                           </div>
                           <label>Descrição
@@ -3942,7 +4979,7 @@ function App() {
                               <div className="photoTile" key={photo.id}>
                                 <img src={photo.imageBase64} alt="" />
                                 <input placeholder="Legenda" value={photo.caption} onChange={(event) => updatePortfolioPhotoCaption(photo.id, event.target.value)} />
-                                <button type="button" onClick={() => removePortfolioPhoto(photo.id)}><Trash2 size={14} /></button>
+                                <button className="dangerButton" type="button" onClick={() => removePortfolioPhoto(photo.id)}><Trash2 size={14} /></button>
                               </div>
                             ))}
                             <label className="photoUpload"><Image size={18} /> Foto do servico
@@ -3953,33 +4990,17 @@ function App() {
                       )
                     })}
                   </div>
-
-                  <div className="serviceEditor">
-                    <div className="sectionTools">
-                      <div>
-                        <h3>Fotos gerais</h3>
-                        <span className="sectionSub">Aparecem como galeria da loja do prestador.</span>
-                      </div>
-                      <label className="photoUpload inlineUpload"><Image size={18} /> Adicionar foto
-                        <input accept="image/*" type="file" onChange={(event) => uploadPortfolioPhoto(null, event.target.files?.[0])} />
-                      </label>
-                    </div>
-                    <div className="photoStrip">
-                      {providerPhotos.filter((photo) => !photo.serviceId).map((photo) => (
-                        <div className="photoTile" key={photo.id}>
-                          <img src={photo.imageBase64} alt="" />
-                          <input placeholder="Legenda" value={photo.caption} onChange={(event) => updatePortfolioPhotoCaption(photo.id, event.target.value)} />
-                          <button type="button" onClick={() => removePortfolioPhoto(photo.id)}><Trash2 size={14} /></button>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
                 </div>
               )}
               {providerTab === 'clientes' && (
                 <div className="providerSection">
                   <div className="sectionTools">
-                    <h3>Gestão de clientes</h3>
+                    <div>
+                      <h3>Gestão de clientes</h3>
+                      <span className="sectionSub">
+                        Ativo: atendido recentemente • Atenção: sem voltar há mais de {data.settings.returnAlertDays} dias • Sem retorno: sem voltar há mais de {data.settings.inactiveAlertDays} dias • Sem atendimento: nunca foi atendido
+                      </span>
+                    </div>
                     <div className="clientTools">
                       <div className="search">
                         <Search size={17} />
@@ -4029,7 +5050,7 @@ function App() {
                 <div className="providerSection">
                   <div className="profileTabs" role="tablist" aria-label="Seções de desempenho">
                     <button type="button" className={performanceSubTab === 'operacao' ? 'active' : ''} onClick={() => setPerformanceSubTab('operacao')}>Operação</button>
-                    <button type="button" className={performanceSubTab === 'aquisicao' ? 'active' : ''} onClick={() => setPerformanceSubTab('aquisicao')}>Aquisição</button>
+                    <button type="button" className={performanceSubTab === 'aquisicao' ? 'active' : ''} onClick={() => setPerformanceSubTab('aquisicao')}>Divulgação</button>
                   </div>
                   {performanceSubTab === 'operacao' && (
                     <OperationalSummary

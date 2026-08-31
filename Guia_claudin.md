@@ -410,6 +410,10 @@ Branch principal: `main`.
 
 O projeto está configurado como SPA por meio de `vercel.json`, direcionando todas as rotas para `index.html`.
 
+Domínio principal de produção: `https://meuservicopro.vercel.app`.
+
+Em 2026-08-29 o alias antigo `marketplace-profit-center.vercel.app` foi removido da Vercel para evitar confusão com o nome anterior do projeto. Após a remoção, `meuservicopro.vercel.app` respondeu `200` e o alias antigo respondeu `404`. Depois de cada deploy, conferir `vercel alias ls`, porque a Vercel pode reanexar aliases históricos; se isso acontecer, remover novamente com `vercel alias rm marketplace-profit-center.vercel.app --yes`.
+
 Antes de publicar:
 
 1. Executar `npm run lint`.
@@ -444,7 +448,174 @@ O representante possui uma área própria em `src/modules/representative/Represe
 
 O vínculo de autoridade continua sendo `providers.representative_user_id`. A interface filtra a carteira para clareza operacional, enquanto a autorização efetiva deve permanecer garantida pelas funções e políticas RLS do Supabase.
 
-## 15. Próximas prioridades
+### Debug de acesso do representante
+
+Em 2026-08-29 foi corrigido o fluxo em que o botão **Definir senha** podia ficar preso em **Salvando...** na tela de representantes.
+
+- O front chama a Edge Function `admin-set-password` com `email`, `userId` e `passwordLength` quando a conta do representante já existe.
+- A Edge Function atualiza o usuário diretamente por `userId`, evitando varrer a lista inteira do Supabase Auth nesse fluxo.
+- Quando a conta já existe, a função atualiza apenas senha e metadados; a confirmação de e-mail fica preservada no Auth.
+- O front usa timeout de 20 segundos e mostra uma mensagem contextual em vez de deixar o botão bloqueado.
+- Representante que já acessou aparece com a ação **Redefinir senha**; conta pendente ou sem acesso aparece como **Definir senha**.
+- A função `admin-set-password` precisa estar publicada no Supabase sempre que esse contrato mudar.
+- O teste local deve ser feito em `http://127.0.0.1:5173`, na aba **Admin > Rede de representantes > Contas**.
+
+Também foi corrigido o roteamento de links de convite. O hash `#representante=...` agora é tratado antes da rota pública de agenda, então não cai mais no aviso **Este link de agendamento não está mais disponível**. Convites de prestador (`#prestador=...`) e cliente (`#cliente=...`) também são isolados da validação de `#agendar`/`#loja`.
+
+Em seguida foi validado o link público `#agendar=consultoria-norte-p3`. A causa do erro era operacional: o prestador `Consultoria Norte` estava com `active=false` e `approval_status='pausado'`. Foi reativado para `active=true` e `approval_status='aprovado'`, e a rota passou a abrir os serviços e o formulário de agendamento em produção.
+
+O link de divulgação/agendamento (`#agendar=<slug>`) também passou a exibir as configurações públicas do prestador que antes ficavam mais concentradas no link de loja (`#loja=<slug>`): tema, título do convite, mensagem, primeira oferta, destaques e fotos vinculadas aos serviços. O objetivo é que o link usado em divulgação já carregue contexto comercial suficiente sem esconder o formulário de agendamento.
+
+### Homologação do perfil Prestador
+
+Homologação executada em produção para os prestadores ativos:
+
+- `clinica-vida-plena-p1`
+- `estudio-corpo-livre-p2`
+- `consultoria-norte-p3`
+
+Fluxos validados:
+
+- Link público `#agendar=<slug>` abre sem cair no login e sem mostrar erro indevido.
+- Link público `#loja=<slug>` abre a vitrine e mantém CTA de agendamento.
+- Cada prestador ativo possui 3 serviços ativos.
+- O formulário público de agendamento existe em cada link.
+- Foi criado um agendamento de homologação para cada prestador ativo via interface pública.
+- Os registros de teste foram removidos em seguida: 3 agendamentos, 3 clientes e 3 vínculos `provider_clients`.
+- O link `#agendar=consultoria-norte-p3` exibe título, mensagem, oferta, destaques e foto de serviço configurados pelo prestador.
+
+Bloqueio encontrado:
+
+- Os prestadores ativos `p1`, `p2` e `p3` estão sem `owner_user_id`.
+- Sem esse vínculo, o painel interno do Prestador não pode ser homologado como login real do prestador.
+- A gestão agora destaca **Prestadores sem acesso** em **Admin > Visão geral**, apontando para a aba Prestadores, onde o Admin master deve usar **Criar acesso** ou **Vincular conta**.
+
+Critério para homologação final do painel Prestador:
+
+1. Cada prestador ativo precisa ter uma conta vinculada.
+2. O login do prestador deve abrir diretamente o módulo Prestador.
+3. Validar abas Agenda, Serviços, Clientes, Insights, Desempenho da loja e Minha loja com esse login real.
+4. Repetir teste de link público depois de qualquer alteração em Minha loja ou Serviços.
+
+### Landing page profissional do prestador
+
+Em 2026-08-30 foi iniciada a ampliação do submódulo **Prestador > Minha loja** para permitir que o prestador monte uma landing page mais profissional sem misturar funções operacionais.
+
+Nova aba: **Conversão**.
+
+Ordem das abas em **Minha loja** segue a ordem de criação/visualização da landing:
+
+1. **Identidade:** marca, nome, cores, estilo e tema público.
+2. **Vitrine:** história, destaques e link da loja.
+3. **Recursos:** profissionais/salas que aparecem como opção no agendamento.
+4. **Conversão:** CTA, prova social, selos, FAQ e canais comerciais.
+5. **Convite:** link direto e convite individual do cliente.
+
+Quando houver recursos ativos em `provider_resources`, a landing pública exibe uma seção **Equipe e estrutura**. Essa seção ajuda o cliente a entender quem/sala/equipe pode atendê-lo antes de chegar ao formulário de agendamento.
+
+Recursos adicionados:
+
+- Subtítulo comercial da página pública.
+- Texto configurável do botão principal.
+- Tema público definido pelo prestador: automático, claro ou escuro.
+- WhatsApp comercial e Instagram.
+- Selos de confiança.
+- Blocos de prova social/resultados.
+- Título da seção de prova social.
+- Perguntas frequentes da landing page.
+
+Novas colunas em `public.providers`:
+
+- `landing_subtitle`
+- `cta_label`
+- `proof_title`
+- `proof_items`
+- `faq_items`
+- `contact_channels`
+- `trust_badges`
+
+Migration local: `supabase/migrations/20260830020000_provider_landing_page_builder.sql`.
+
+Esses campos aparecem no link público `#loja=<slug>` e também complementam `#agendar=<slug>` quando houver dados preenchidos. O objetivo é melhorar conversão sem esconder o formulário de agendamento.
+
+O seletor de aparência não deve aparecer para o cliente na landing pública da loja. A decisão visual do link público fica em **Prestador > Minha loja > Identidade > Tema público**, salvo em `providers.theme.publicAppearance`.
+
+O prestador também possui uma prévia dentro de **Prestador > Minha loja**, abaixo do editor. A prévia usa o rascunho atual (`inviteDraft`), então alterações ainda não salvas já aparecem para conferência antes de publicar no link real. A prévia é contextual: cada aba mostra o trecho da landing que está sendo editado naquele momento, em vez de sempre mostrar a página inteira.
+
+Os estilos **Profissional**, **Acolhedor** e **Premium** não devem ser apenas variações sutis de borda. Eles alteram a presença da landing pública e da prévia interna:
+
+- **Profissional:** página mais direta, compacta e operacional.
+- **Acolhedor:** largura maior, hero mais suave, destaque lateral e cards em grade mais respirada.
+- **Premium:** hero amplo, CTA mais forte, cards de serviço em três colunas e blocos com tratamento visual mais sofisticado.
+
+Refinamento Premium em 2026-08-30:
+
+- Hero com logo em destaque, profundidade visual, CTA arredondado e contraste mais forte.
+- Topo Premium usa composição própria: logo em selo absoluto no desktop, conteúdo em duas colunas internas, moldura discreta, oferta alinhada com CTA e recuo removido no mobile.
+- Cards de serviço com acabamento elevado, sombra discreta e imagem em proporção mais nobre.
+- Cards Premium de serviço possuem hierarquia própria: título mais forte, descrição com leitura confortável, preço/duração em cápsula e ação visual **Selecionar** sem alterar o fluxo de clique.
+- No desktop, a vitrine Premium usa três colunas quando há espaço.
+- No mobile, a vitrine Premium volta para uma coluna para preservar leitura e toque confortável.
+
+## 15. Requisitos de landing page para divulgação
+
+Em 2026-08-30, a landing do prestador recebeu a primeira camada dos requisitos necessários para divulgação em tráfego pago e canais públicos.
+
+Campos adicionados em `public.providers` pela migration local `supabase/migrations/20260830040000_provider_landing_marketing_controls.sql`:
+
+- `terms_text`: política, regras de atendimento, cancelamento e privacidade do prestador.
+- `neighborhood`, `address`, `service_mode`: local e formato do atendimento.
+- `hero_banner_url` e `gallery_photos`: banner/galeria configurável por URL, além da galeria por upload em `portfolio_photos`.
+- `testimonials`: depoimentos completos com nome, foto, nota e texto.
+- `seo_title` e `seo_description`: SEO básico por prestador.
+- `meta_pixel_id` e `google_tag_id`: IDs de rastreamento externo, sem permitir script livre.
+- `thank_you_title` e `thank_you_message`: conteúdo da página exibida após o agendamento.
+- `landing_status`: controle de publicação entre `rascunho` e `publicado`.
+
+O padrão da migration ficou como `publicado` para não tirar do ar prestadores antigos já aprovados. Novos prestadores criados pelo app iniciam como `rascunho` no fluxo local, e precisam ser salvos/publicados pelo prestador ou pela gestão.
+
+No painel, os controles ficam em **Prestador > Minha loja**:
+
+- **Identidade:** marca, tema público, status da landing e SEO básico.
+- **Vitrine:** história, local/formato de atendimento, banner principal, banners, fotos, galeria por URL, destaques e exibição de preços.
+- **Recursos:** profissionais/salas/equipe que aparecem no agendamento quando ativos.
+- **Conversão:** subtítulo, CTA, canais comerciais, selos, prova social, depoimentos completos, página de obrigado, pixels externos, política/termos e FAQ.
+- **Convite:** links e textos de convite direto para cliente.
+
+Na página pública:
+
+- Prestadores em `rascunho` deixam de aparecer nos links públicos.
+- O cliente vê local/formato de atendimento quando preenchido.
+- Banner principal e galeria aparecem na vitrine.
+- Depoimentos aparecem quando houver nome ou texto.
+- Política/termos aparecem em bloco próprio na landing.
+- Após solicitar agendamento, o cliente vê a tela de obrigado configurada pelo prestador.
+- Eventos internos continuam alimentando `analytics_events`.
+- Eventos externos disparam para Meta/Google apenas por ID configurado, usando eventos como `view_storefront`, `view_booking_page` e `booking_complete`.
+
+Limitação importante: como o projeto ainda usa Vite SPA com rotas por hash (`#loja=` e `#agendar=`), o SEO básico melhora título/descrição no navegador, mas não substitui uma rota pública real como `/loja/slug` com renderização/prerender para indexação forte e compartilhamento perfeito em redes sociais.
+
+## 16. Regra de trabalho com agentes
+
+Para preservar tempo, custo e foco, ajustes pequenos devem ser tratados de forma direta.
+
+- Usar subagentes somente quando houver trabalho paralelo real ou revisão especializada necessária.
+- Evitar auditorias completas para mudanças pequenas de UI ou texto.
+- Rodar apenas as validações proporcionais ao risco da alteração.
+- Para alteração visual simples, priorizar leitura pontual, patch pequeno e `npm run build`.
+- Só rodar lint, Playwright, Supabase ou deploy quando a mudança tocar fluxo crítico, banco, produção ou comportamento público.
+- Respostas finais devem ser curtas, dizendo o que mudou e qual validação foi feita.
+
+Para ajustes com imagem de referência:
+
+- Primeiro descrever objetivamente a imagem antes de editar: forma, tamanho, cor, borda, fundo, sombra, texto e hierarquia.
+- Separar o que é parte do ícone do que é fundo, botão, halo ou efeito decorativo.
+- Quando o usuário disser “só o ícone”, remover texto, badges, halos, fundos extras e contornos que não fazem parte do próprio símbolo.
+- Preferir SVG/HTML/CSS direto quando o objetivo for ícone preciso; evitar tentativa visual por aproximação.
+- Se houver dúvida entre duas interpretações, aplicar a mais literal e simples da referência.
+- Depois do primeiro ajuste, validar visualmente a diferença principal antes de continuar refinando detalhes.
+
+## 17. Próximas prioridades
 
 1. Criar o modelo `profiles` + `user_roles` para múltiplos papéis.
 2. Fechar as políticas RLS e testar cada perfil isoladamente.
@@ -456,7 +627,7 @@ O vínculo de autoridade continua sendo `providers.representative_user_id`. A in
 9. Definir política de retenção, exclusão e exportação de dados.
 10. Validar acessibilidade e responsividade em todas as áreas antes da produção final.
 
-## 16. Critérios mínimos para uso em produção
+## 18. Critérios mínimos para uso em produção
 
 O projeto só deve receber dados reais quando os itens abaixo estiverem concluídos:
 

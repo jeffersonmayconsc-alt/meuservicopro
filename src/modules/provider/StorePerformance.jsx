@@ -27,8 +27,8 @@ export function StorePerformance({ analyticsDays, bookingStarts, funnelConversio
       </div>
       <div className="funnelPanel">
         <div className="funnelHeader">
-          <div><h3>Funil de conversão</h3><span className="sectionSub">Da visualização até o pedido confirmado.</span></div>
-          <strong>{percentage(funnelConversion)}% <small>conversão total</small></strong>
+          <div><h3>Do primeiro clique até o agendamento</h3><span className="sectionSub">Quantas pessoas avançam em cada etapa, da visualização até o pedido confirmado.</span></div>
+          <strong>{percentage(funnelConversion)}% <small>completaram o pedido</small></strong>
         </div>
         <div className="funnelRows">
           <div><span>Visualizaram um serviço</span><div><i style={{ width: serviceViews ? '100%' : '0%' }} /></div><strong>{serviceViews}</strong></div>
@@ -40,7 +40,7 @@ export function StorePerformance({ analyticsDays, bookingStarts, funnelConversio
       <div className="servicePerformance">
         <div><h3>Desempenho por serviço</h3><span className="sectionSub">Compare interesse e conversão da sua oferta.</span></div>
         <div className="performanceTable">
-          <div className="performanceHead"><span>Serviço</span><span>Visualizações</span><span>Inícios</span><span>Agendamentos</span><span>Conversão</span></div>
+          <div className="performanceHead"><span>Serviço</span><span>Visualizações</span><span>Inícios</span><span>Agendamentos</span><span>Taxa de conclusão</span></div>
           {providerServiceAnalytics.map((service) => (
             <div className="performanceRow" key={service.id}>
               <strong>{service.name}</strong><span>{service.views}</span><span>{service.starts}</span><span>{service.bookings}</span><span>{percentage(service.conversion)}%</span>

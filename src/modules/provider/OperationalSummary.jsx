@@ -12,7 +12,7 @@ export function OperationalSummary({ clientsWithoutReturn, completedBookings, cu
       </div>
       <div className="metricGrid operationalMetrics">
         <Stat label="Receita estimada" value={currency(providerRevenue)} icon={<Store />} />
-        <Stat label="Sob consulta" value={providerConsultationBookings} icon={<AlertCircle />} />
+        <Stat label="Atendimentos a combinar preço" value={providerConsultationBookings} icon={<AlertCircle />} />
         <Stat label="Atendimentos concluídos" value={completedBookings} icon={<CheckCircle2 />} />
         <Stat label="Clientes sem retorno" value={clientsWithoutReturn} icon={<Clock3 />} />
       </div>

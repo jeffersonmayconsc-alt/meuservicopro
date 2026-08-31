@@ -29,6 +29,7 @@ Deno.serve(async (request) => {
 
     const payload = await request.json()
     const email = String(payload.email || '').trim().toLowerCase()
+    const userId = payload.userId ? String(payload.userId) : null
     const inviteToken = payload.inviteToken ? String(payload.inviteToken) : null
     if (!email || !email.includes('@')) return json({ error: 'Informe um e-mail válido.' }, 400)
 
@@ -37,11 +38,20 @@ Deno.serve(async (request) => {
     const tempPassword = generateTempPassword(passwordLength)
 
     let targetUser = null
-    for (let page = 1; page <= 20 && !targetUser; page += 1) {
-      const { data: pageResult, error: listError } = await adminClient.auth.admin.listUsers({ page, perPage: 200 })
-      if (listError) throw listError
-      targetUser = pageResult.users.find((user) => user.email?.toLowerCase() === email) || null
-      if (pageResult.users.length < 200) break
+    if (userId) {
+      const { data: userResult, error: userError } = await adminClient.auth.admin.getUserById(userId)
+      if (userError) throw userError
+      targetUser = userResult.user
+      if (!targetUser || targetUser.email?.toLowerCase() !== email) {
+        return json({ error: 'A conta informada nao corresponde ao representante selecionado.' }, 400)
+      }
+    } else {
+      for (let page = 1; page <= 20 && !targetUser; page += 1) {
+        const { data: pageResult, error: listError } = await adminClient.auth.admin.listUsers({ page, perPage: 200 })
+        if (listError) throw listError
+        targetUser = pageResult.users.find((user) => user.email?.toLowerCase() === email) || null
+        if (pageResult.users.length < 200) break
+      }
     }
 
     let resultUser
@@ -49,7 +59,6 @@ Deno.serve(async (request) => {
     if (targetUser) {
       const { data: updated, error: updateError } = await adminClient.auth.admin.updateUserById(targetUser.id, {
         password: tempPassword,
-        email_confirm: true,
         user_metadata: { ...targetUser.user_metadata, must_change_password: true },
       })
       if (updateError) throw updateError
