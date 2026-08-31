@@ -732,29 +732,14 @@ function App() {
 
   useEffect(() => {
     const link = document.querySelector('link[rel="icon"]')
-    const manifest = document.querySelector('link[rel="manifest"]')
-    if (!link || !manifest) return
+    if (!link) return
     const logoUrl = data?.brand?.logoUrl || ''
     if (data?.brand?.logoUrl) {
       link.href = logoUrl
       link.type = logoUrl.match(/^data:([^;]+)/)?.[1] || 'image/png'
-
-      // O instalador le o manifest separadamente da pagina; mantenha os dois na mesma marca.
-      const manifestData = {
-        name: data.brand.name || 'Meu Servico Online',
-        short_name: 'Meu Servico',
-        start_url: '/',
-        scope: '/',
-        display: 'standalone',
-        theme_color: '#0d1118',
-        background_color: '#0d1118',
-        icons: [{ src: logoUrl, sizes: 'any', type: link.type, purpose: 'any maskable' }],
-      }
-      manifest.href = `data:application/manifest+json,${encodeURIComponent(JSON.stringify(manifestData))}`
     } else {
       link.href = '/brand-icon.png?v=1'
       link.type = 'image/png'
-      manifest.href = '/manifest.webmanifest'
     }
   }, [data?.brand?.logoUrl, data?.brand?.name])
 

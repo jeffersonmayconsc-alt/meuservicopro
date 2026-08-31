@@ -1,5 +1,5 @@
-const CACHE_NAME = 'meu-servico-online-shell-v3'
-const APP_SHELL = ['/', '/index.html', '/brand-icon.png?v=1', '/icons.svg', '/manifest.webmanifest']
+const CACHE_NAME = 'meu-servico-online-shell-v4'
+const APP_SHELL = ['/', '/index.html', '/brand-icon-192.png?v=1', '/brand-icon-512.png?v=1', '/icons.svg', '/manifest.webmanifest']
 
 self.addEventListener('install', (event) => {
   event.waitUntil(caches.open(CACHE_NAME).then((cache) => cache.addAll(APP_SHELL)))
