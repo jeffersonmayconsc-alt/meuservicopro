@@ -22,6 +22,7 @@ import {
   Moon,
   Palette,
   Plus,
+  QrCode,
   Shield,
   Search,
   Settings,
@@ -32,6 +33,7 @@ import {
   Trash2,
   TrendingUp,
   Users,
+  Wallet,
 } from 'lucide-react'
 import { supabase } from './lib/supabaseClient'
 import { Stat } from './components/Stat'
@@ -41,6 +43,7 @@ import { ClientServiceHistory } from './modules/client/ClientServiceHistory'
 import { OperationalSummary } from './modules/provider/OperationalSummary'
 import { StorePerformance } from './modules/provider/StorePerformance'
 import { RepresentativePreview } from './modules/representative/RepresentativePreview'
+import { currency, formatServiceDuration, formatServicePrice } from './lib/serviceFormatters'
 import './App.css'
 
 const times = ['08:00', '09:00', '10:00', '11:00', '14:00', '15:00', '16:00', '17:00']
@@ -82,6 +85,11 @@ const SERVICE_MODE_OPTIONS = [
   ['online', 'Somente online'],
 ]
 
+const FINANCE_CATEGORY_OPTIONS = {
+  despesa: ['Tráfego pago', 'Assinaturas/ferramentas SaaS', 'Equipe/freelancer', 'Outras despesas'],
+  receita: ['Assinaturas de prestadores', 'Outras receitas'],
+}
+
 const LANDING_STATUS_OPTIONS = [
   ['rascunho', 'Rascunho'],
   ['publicado', 'Publicado'],
@@ -107,6 +115,25 @@ function upsertMetaTag(selector, attributes) {
     document.head.appendChild(element)
   }
   Object.entries(attributes).forEach(([key, value]) => element.setAttribute(key, value))
+}
+
+// Crawler de rede social (WhatsApp, Facebook, Instagram) não lê imagem em
+// data URI — só URL absoluta. Prestador com logo/banner ainda em base64 (legado,
+// antes da migração pro Storage) cai no ícone da marca.
+function absolutePublicImage(candidate) {
+  if (typeof candidate === 'string' && candidate.startsWith('http')) return candidate
+  return `${window.location.origin}/brand-icon-512.png`
+}
+
+function upsertJsonLd(id, payload) {
+  let element = document.head.querySelector(`script[data-ld="${id}"]`)
+  if (!element) {
+    element = document.createElement('script')
+    element.type = 'application/ld+json'
+    element.dataset.ld = id
+    document.head.appendChild(element)
+  }
+  element.textContent = JSON.stringify(payload)
 }
 
 function normalizePhotoUrl(photo) {
@@ -308,6 +335,32 @@ function mapAnnouncementRow(row) {
   }
 }
 
+function mapReviewRow(row) {
+  return {
+    id: row.id,
+    providerId: row.provider_id,
+    bookingId: row.booking_id,
+    clientName: row.client_name,
+    contact: row.contact,
+    rating: row.rating,
+    comment: row.comment,
+    status: row.status,
+    createdAt: row.created_at,
+  }
+}
+
+function mapFinanceEntryRow(row) {
+  return {
+    id: row.id,
+    entryType: row.entry_type,
+    category: row.category,
+    description: row.description,
+    amount: Number(row.amount),
+    date: row.date,
+    createdAt: row.created_at,
+  }
+}
+
 function mapPrivacyRequestRow(row) {
   return {
     id: row.id,
@@ -404,6 +457,8 @@ async function fetchCriticalData() {
     providerInvites: [],
     analyticsEvents: [],
     announcements: [],
+    reviews: [],
+    financeEntries: [],
   }
 }
 
@@ -424,11 +479,13 @@ async function fetchBackgroundData() {
     if (res.error) console.warn('Não foi possível carregar parte dos dados em segundo plano.', res.error.message)
   }
 
-  const [providerResources, providerInvites, analyticsEvents, announcements] = await Promise.all([
+  const [providerResources, providerInvites, analyticsEvents, announcements, reviews, financeEntries] = await Promise.all([
     optionalSelect('provider_resources'),
     optionalSelect('provider_invites'),
     optionalSelect('analytics_events'),
     optionalSelect('platform_announcements'),
+    optionalSelect('booking_reviews'),
+    optionalSelect('finance_entries'),
   ])
 
   return {
@@ -441,22 +498,31 @@ async function fetchBackgroundData() {
     providerInvites: providerInvites.map(mapProviderInviteRow),
     analyticsEvents: analyticsEvents.map(mapAnalyticsEventRow),
     announcements: announcements.map(mapAnnouncementRow),
+    reviews: reviews.map(mapReviewRow),
+    financeEntries: financeEntries.map(mapFinanceEntryRow),
   }
 }
 
 function getLinkedProviderId() {
   const params = new URLSearchParams(window.location.hash.replace('#', ''))
-  return params.get('agendar') || params.get('loja')
+  const cleanMatch = window.location.pathname.match(/^\/(agendar|loja)\/([^/]+)\/?$/)
+  return params.get('agendar') || params.get('loja') || cleanMatch?.[2] || null
 }
 
 function getPublicEntryType() {
   const params = new URLSearchParams(window.location.hash.replace('#', ''))
-  return params.get('loja') ? 'loja' : 'agendar'
+  const cleanMatch = window.location.pathname.match(/^\/(agendar|loja)\/[^/]+\/?$/)
+  return params.get('loja') || cleanMatch?.[1] === 'loja' ? 'loja' : 'agendar'
 }
 
 function getInviteToken(type) {
   const params = new URLSearchParams(window.location.hash.replace('#', ''))
-  return params.get(type)
+  const cleanMatch = window.location.pathname.match(/^\/(cliente|prestador|representante)\/([^/]+)\/?$/)
+  return params.get(type) || (cleanMatch?.[1] === type ? cleanMatch[2] : null)
+}
+
+function getPublicPath(type, value) {
+  return `${window.location.origin}/${type}/${value}`
 }
 
 function getSavedClient(providerId) {
@@ -519,10 +585,6 @@ function tokenValue() {
   return crypto.randomUUID().replaceAll('-', '')
 }
 
-function currency(value) {
-  return new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(value)
-}
-
 function formatDate(date) {
   return new Intl.DateTimeFormat('pt-BR', { day: '2-digit', month: '2-digit', year: 'numeric' }).format(
     new Date(`${date}T00:00:00`),
@@ -534,17 +596,6 @@ function daysSince(date) {
   const today = new Date()
   const reference = new Date(`${date}T00:00:00`)
   return Math.max(0, Math.floor((today - reference) / 86400000))
-}
-
-function formatServicePrice(service, showPrices = true) {
-  if (!service) return ''
-  if (!showPrices || service.priceMode === 'sob_consulta') return 'Sob consulta'
-  if (service.priceMode === 'a_partir_de') return 'A partir de ' + currency(service.price)
-  return currency(service.price)
-}
-
-function formatServiceDuration(service) {
-  return service?.duration ? service.duration + ' min' : 'Duração variável'
 }
 
 function deviceName(userAgent = '') {
@@ -620,12 +671,15 @@ function App() {
   const [provisioningNotice, setProvisioningNotice] = useState('')
   const [provisioningDebug, setProvisioningDebug] = useState(null)
   const [representativeSecurity, setRepresentativeSecurity] = useState({})
+  const [toast, setToast] = useState(null)
+  const toastTimeout = useRef(null)
   const trackedAnalytics = useRef(new Set())
   const [publicProviderId, setPublicProviderId] = useState(null)
   const [publicEntryType, setPublicEntryType] = useState('agendar')
   const [view, setView] = useState('cliente')
   const [selectedProvider, setSelectedProvider] = useState(null)
   const [query, setQuery] = useState('')
+  const [categoryFilter, setCategoryFilter] = useState('todas')
   const [providerTab, setProviderTab] = useState('agenda')
   const [analyticsDays, setAnalyticsDays] = useState(30)
   const [providerProfileTab, setProviderProfileTab] = useState('identidade')
@@ -650,6 +704,8 @@ function App() {
   const [clientSearch, setClientSearch] = useState('')
   const [successMessage, setSuccessMessage] = useState('')
   const [thankYouBooking, setThankYouBooking] = useState(null)
+  const [reviewForm, setReviewForm] = useState({ rating: 5, comment: '' })
+  const [reviewMessage, setReviewMessage] = useState('')
   const [cartPanelOpen, setCartPanelOpen] = useState(false)
   const [checkoutStep, setCheckoutStep] = useState(false)
   const [cartToast, setCartToast] = useState(null)
@@ -672,6 +728,19 @@ function App() {
     notes: '',
     consent: false,
   })
+
+  const notify = useCallback((message, type = 'error') => {
+    if (toastTimeout.current) window.clearTimeout(toastTimeout.current)
+    setToast({ id: crypto.randomUUID(), message, type })
+    toastTimeout.current = window.setTimeout(() => setToast(null), 5200)
+  }, [])
+
+  const renderToast = () => toast && (
+    <div className={`appToast ${toast.type}`} role="status" aria-live="polite">
+      <span>{toast.message}</span>
+      <button type="button" onClick={() => setToast(null)} aria-label="Fechar aviso">×</button>
+    </div>
+  )
   const [providerForm, setProviderForm] = useState({
     name: '',
     owner: '',
@@ -691,6 +760,14 @@ function App() {
   const [representativeEmail, setRepresentativeEmail] = useState('')
   const [announcementForm, setAnnouncementForm] = useState({ title: '', message: '' })
   const [configSubTab, setConfigSubTab] = useState('marca')
+  const [storeQrCode, setStoreQrCode] = useState('')
+  const [financeSubTab, setFinanceSubTab] = useState('resumo')
+  const [financeEntryForm, setFinanceEntryForm] = useState({
+    entryType: 'despesa', category: FINANCE_CATEGORY_OPTIONS.despesa[0], description: '', amount: '',
+    date: new Date().toISOString().slice(0, 10),
+  })
+  const [financePeriod, setFinancePeriod] = useState('mes_atual')
+  const [newPayingProviders, setNewPayingProviders] = useState('')
   const [representativeNotice, setRepresentativeNotice] = useState('')
   const [representativeDeliveryNotice, setRepresentativeDeliveryNotice] = useState('')
   const [representativeInviteLink, setRepresentativeInviteLink] = useState('')
@@ -1029,7 +1106,11 @@ function App() {
     if (!data) return
     const handlePublicRoute = () => resolvePublicRoute(data)
     window.addEventListener('hashchange', handlePublicRoute)
-    return () => window.removeEventListener('hashchange', handlePublicRoute)
+    window.addEventListener('popstate', handlePublicRoute)
+    return () => {
+      window.removeEventListener('hashchange', handlePublicRoute)
+      window.removeEventListener('popstate', handlePublicRoute)
+    }
   }, [data])
 
   useEffect(() => {
@@ -1059,7 +1140,7 @@ function App() {
       .then(({ data: rows, error }) => {
         if (cancelled) return
         if (error) {
-          alert('Nao foi possivel carregar o portfolio desse prestador.')
+          notify('Nao foi possivel carregar o portfolio desse prestador.')
           return
         }
         updateData((current) => ({
@@ -1075,7 +1156,7 @@ function App() {
     return () => {
       cancelled = true
     }
-  }, [data, publicProviderId, providerTab, selectedProvider, loadedPortfolioProviders])
+  }, [data, publicProviderId, providerTab, selectedProvider, loadedPortfolioProviders, notify])
 
 
   const activeProviders = data
@@ -1090,11 +1171,15 @@ function App() {
         .filter((service) => !publicProviderId || service.providerId === publicProviderId)
         .sort((first, second) => first.position - second.position || first.name.localeCompare(second.name))
     : []
-  const filteredServices = publicServices.filter((service) =>
-    `${service.name} ${service.description} ${service.provider.name} ${service.provider.category} ${service.provider.city}`
-      .toLowerCase()
-      .includes(query.toLowerCase()),
-  )
+  const publicCategories = [...new Set(publicServices.map((service) => service.provider.category).filter(Boolean))]
+    .sort((first, second) => first.localeCompare(second))
+  const filteredServices = publicServices
+    .filter((service) => categoryFilter === 'todas' || service.provider.category === categoryFilter)
+    .filter((service) =>
+      `${service.name} ${service.description} ${service.provider.name} ${service.provider.category} ${service.provider.city}`
+        .toLowerCase()
+        .includes(query.toLowerCase()),
+    )
   const bookingService = publicServices.find((item) => item.id === bookingForm.serviceId) || publicServices[0]
   const publicThemeProvider = publicProviderId
     ? bookingService?.provider || activeProviders.find((item) => item.id === publicProviderId)
@@ -1155,10 +1240,35 @@ function App() {
     const description = publicThemeProvider.seoDescription || publicThemeProvider.landingSubtitle || publicThemeProvider.inviteMessage || `Agende atendimento com ${publicThemeProvider.name}.`
     // eslint-disable-next-line react/immutability -- a landing publica precisa sincronizar o titulo do documento.
     document.title = title
+    const shareImage = absolutePublicImage(publicThemeProvider.logoUrl)
+    const shareUrl = `${window.location.origin}/loja/${publicThemeProvider.slug || publicThemeProvider.id}`
     upsertMetaTag('meta[name="description"]', { name: 'description', content: description })
     upsertMetaTag('meta[property="og:title"]', { property: 'og:title', content: title })
     upsertMetaTag('meta[property="og:description"]', { property: 'og:description', content: description })
     upsertMetaTag('meta[property="og:type"]', { property: 'og:type', content: 'website' })
+    upsertMetaTag('meta[property="og:image"]', { property: 'og:image', content: shareImage })
+    upsertMetaTag('meta[property="og:url"]', { property: 'og:url', content: shareUrl })
+    upsertMetaTag('meta[name="twitter:card"]', { name: 'twitter:card', content: 'summary_large_image' })
+    upsertJsonLd('local-business', {
+      '@context': 'https://schema.org',
+      '@type': 'LocalBusiness',
+      name: publicThemeProvider.name,
+      description,
+      url: shareUrl,
+      image: shareImage,
+      ...(publicThemeProvider.category ? { additionalType: publicThemeProvider.category } : {}),
+      ...(publicThemeProvider.contactChannels?.whatsapp ? { telephone: publicThemeProvider.contactChannels.whatsapp } : {}),
+      ...(publicThemeProvider.neighborhood || publicThemeProvider.address
+        ? {
+            address: {
+              '@type': 'PostalAddress',
+              ...(publicThemeProvider.address ? { streetAddress: publicThemeProvider.address } : {}),
+              ...(publicThemeProvider.neighborhood ? { addressLocality: publicThemeProvider.neighborhood } : {}),
+              addressCountry: 'BR',
+            },
+          }
+        : {}),
+    })
 
     return () => {
       // eslint-disable-next-line react/immutability -- restaura o titulo da aplicacao ao sair do link publico.
@@ -1255,8 +1365,15 @@ function App() {
   const inviteDraft = (provider && inviteDrafts[provider.id]) || provider
   const previewHeroBannerUrl = providerBannerPhotos[0]?.imageBase64 || inviteDraft?.heroBannerUrl || ''
   const hasUnsavedChanges = Boolean(provider && inviteDrafts[provider.id])
+  const storeSetupItems = [
+    { label: 'Nome e logo', done: Boolean(inviteDraft?.name && inviteDraft?.logoUrl) },
+    { label: 'Serviços', done: providerServices.length > 0 },
+    { label: 'Foto principal', done: Boolean(previewHeroBannerUrl) },
+    { label: 'Texto da loja', done: Boolean(inviteDraft?.about) },
+  ]
+  const storeSetupDone = storeSetupItems.filter((item) => item.done).length
   const bookingServiceName = (booking) =>
-    data?.providerServices.find((service) => service.id === booking.serviceId)?.name || 'Servico nao especificado'
+    data?.providerServices.find((service) => service.id === booking.serviceId)?.name || 'Serviço não especificado'
   const providerBookings = data
     ? data.bookings
         .filter((booking) => booking.providerId === provider?.id)
@@ -1349,7 +1466,7 @@ function App() {
     setPublicEntryType('agendar')
     setSuccessMessage('')
     setCheckoutStep(true)
-    window.history.replaceState(null, '', `#agendar=${entry.provider.slug || entry.provider.id}`)
+    window.history.replaceState(null, '', `/agendar/${entry.provider.slug || entry.provider.id}`)
     trackAnalyticsEvent('iniciou_agendamento', entry.service)
     window.setTimeout(() => window.scrollTo(0, 0), 0)
   }
@@ -1362,6 +1479,16 @@ function App() {
   const bookingStarts = providerAnalytics.filter((event) => event.eventType === 'iniciou_agendamento').length
   const generatedBookings = providerAnalytics.filter((event) => event.eventType === 'agendamento_concluido').length
   const uniqueVisitors = new Set(providerAnalytics.map((event) => event.visitorId)).size
+  const sourceBreakdown = Object.values(
+    providerAnalytics
+      .filter((event) => event.eventType === 'visualizou_servico')
+      .reduce((groups, event) => {
+        const source = event.source || 'direto'
+        groups[source] = groups[source] || { source, views: 0 }
+        groups[source].views += 1
+        return groups
+      }, {}),
+  ).sort((first, second) => second.views - first.views)
   const funnelConversion = serviceViews ? Math.min(100, (generatedBookings / serviceViews) * 100) : 0
   const startConversion = bookingStarts ? Math.min(100, (generatedBookings / bookingStarts) * 100) : 0
   const providerServiceAnalytics = providerServices
@@ -1432,6 +1559,21 @@ function App() {
     clients: uniqueClients,
     revenue,
   }
+  const financeEntries = data ? data.financeEntries : []
+  const sortedFinanceEntries = financeEntries.slice().sort((a, b) => (a.date < b.date ? 1 : -1))
+  const currentMonthKey = new Date().toISOString().slice(0, 7)
+  const periodFinanceEntries = financePeriod === 'mes_atual'
+    ? financeEntries.filter((entry) => entry.date.slice(0, 7) === currentMonthKey)
+    : financeEntries
+  const periodRevenue = periodFinanceEntries.filter((e) => e.entryType === 'receita').reduce((t, e) => t + e.amount, 0)
+  const periodExpenses = periodFinanceEntries.filter((e) => e.entryType === 'despesa').reduce((t, e) => t + e.amount, 0)
+  const periodMargin = periodRevenue - periodExpenses
+  const periodMarginPercent = periodRevenue > 0 ? ((periodMargin / periodRevenue) * 100).toFixed(1) : '0,0'
+  const paidTrafficExpenses = periodFinanceEntries
+    .filter((e) => e.entryType === 'despesa' && e.category === 'Tráfego pago')
+    .reduce((t, e) => t + e.amount, 0)
+  const parsedNewPayingProviders = Number(newPayingProviders)
+  const estimatedCac = parsedNewPayingProviders > 0 ? paidTrafficExpenses / parsedNewPayingProviders : null
   const representativePreviewProviders = data
     ? data.providers.filter((item) => item.representativeUserId === (session?.isRepresentative ? authUser?.id : representativePreviewId))
     : []
@@ -1452,7 +1594,7 @@ function App() {
       .from('platform_settings')
       .update({ [SETTINGS_COLUMN_MAP[field]]: value })
       .eq('id', 1)
-    if (error) alert('Não foi possível salvar esse parâmetro no banco de dados. Tente novamente.')
+    if (error) notify('Não foi possível salvar esse parâmetro no banco de dados. Tente novamente.')
   }
 
   const showCartToast = (message, type) => {
@@ -1499,7 +1641,7 @@ function App() {
       : false
 
     if (providerRequiresResource && !bookingForm.resourceId) {
-      alert('Escolha com quem você quer agendar antes de confirmar.')
+      notify('Escolha com quem você quer agendar antes de confirmar.')
       return
     }
 
@@ -1522,7 +1664,7 @@ function App() {
     )
 
     if (!availableProvider) {
-      alert('Esse horário já foi ocupado para esse serviço. Escolha outro horário.')
+      notify('Esse horário já foi ocupado para esse serviço. Escolha outro horário.')
       return
     }
 
@@ -1604,12 +1746,14 @@ function App() {
     })
 
     setThankYouBooking({
+      id: bookingId,
       provider: availableProvider,
       service: selectedBookingService,
       extraServices: extraServicesText,
       date: bookingForm.date,
       time: bookingForm.time,
       client: bookingForm.client,
+      contact: bookingForm.contact,
     })
     setBookingForm({ ...bookingForm, client: '', contact: '', notes: '', consent: false, serviceId: '', cartServiceIds: [] })
     setSuccessMessage('Agendamento solicitado. O prestador recebeu sua solicitação.')
@@ -1687,7 +1831,7 @@ function App() {
         }))
       }
     } catch {
-      alert('O agendamento apareceu na tela, mas houve um erro ao salvar no banco de dados. Atualize a página para conferir se ficou salvo.')
+      notify('O agendamento apareceu na tela, mas houve um erro ao salvar no banco de dados. Atualize a página para conferir se ficou salvo.')
     }
   }
 
@@ -1698,7 +1842,7 @@ function App() {
       : null
 
     if (session?.role !== 'admin' && !invite && !data.settings.allowProviderSelfSignup) {
-      alert('Cadastro de prestador somente por convite do admin.')
+      notify('Cadastro de prestador somente por convite do admin.')
       return
     }
 
@@ -1833,14 +1977,14 @@ function App() {
         .update({ status: 'usado', used_by_provider_id: id, used_at: createdAt })
         .eq('id', invite.id)
     }
-    if (error || serviceError) alert('O cadastro apareceu na tela, mas houve um erro ao salvar no banco de dados. Atualize a pagina para conferir se ficou salvo.')
+    if (error || serviceError) notify('O cadastro apareceu na tela, mas houve um erro ao salvar no banco de dados. Atualize a pagina para conferir se ficou salvo.')
   }
 
 
   const approveProvider = async (id) => {
     const { error } = await supabase.from('providers').update({ active: true, approval_status: 'aprovado' }).eq('id', id)
     if (error) {
-      alert('Não foi possível aprovar esse prestador no banco de dados. Tente novamente.')
+      notify('Não foi possível aprovar esse prestador no banco de dados. Tente novamente.')
       return false
     }
     updateData((current) => ({
@@ -1855,12 +1999,12 @@ function App() {
   const linkProviderOwner = async (id, ownerEmail) => {
     const email = ownerEmail.trim().toLowerCase()
     if (!email.includes('@')) {
-      alert('Informe o e-mail que o prestador já usou para fazer login.')
+      notify('Informe o e-mail que o prestador já usou para fazer login.')
       return false
     }
     const { error } = await supabase.rpc('link_provider_owner', { target_provider_id: id, owner_email: email })
     if (error) {
-      alert(error.message || 'Não foi possível vincular essa conta a esse prestador.')
+      notify(error.message || 'Não foi possível vincular essa conta a esse prestador.')
       return false
     }
     updateData((current) => ({
@@ -1883,7 +2027,7 @@ function App() {
       bookings: current.bookings.map((booking) => (booking.id === id ? { ...booking, status } : booking)),
     }))
     const { error } = await supabase.from('bookings').update({ status }).eq('id', id)
-    if (error) alert('Não foi possível salvar essa alteração de status no banco de dados. Tente novamente.')
+    if (error) notify('Não foi possível salvar essa alteração de status no banco de dados. Tente novamente.')
   }
 
   const createBlockedSlot = async (event) => {
@@ -1892,7 +2036,7 @@ function App() {
     const hasBlock = agendaDayBlocks.some((slot) => slot.time === blockForm.time)
 
     if (hasBooking || hasBlock) {
-      alert('Esse horário já está ocupado ou bloqueado.')
+      notify('Esse horário já está ocupado ou bloqueado.')
       return
     }
 
@@ -1926,7 +2070,7 @@ function App() {
       reason,
       resource_id: blockResourceId,
     })
-    if (error) alert('O bloqueio apareceu na tela, mas houve um erro ao salvar no banco de dados. Atualize a página para conferir se ficou salvo.')
+    if (error) notify('O bloqueio apareceu na tela, mas houve um erro ao salvar no banco de dados. Atualize a página para conferir se ficou salvo.')
   }
 
   const removeBlockedSlot = async (id) => {
@@ -1935,7 +2079,7 @@ function App() {
       blockedSlots: current.blockedSlots.filter((slot) => slot.id !== id),
     }))
     const { error } = await supabase.from('blocked_slots').delete().eq('id', id)
-    if (error) alert('Não foi possível liberar esse horário no banco de dados. Tente novamente.')
+    if (error) notify('Não foi possível liberar esse horário no banco de dados. Tente novamente.')
   }
 
   const createProviderService = async () => {
@@ -1967,7 +2111,7 @@ function App() {
       position: service.position,
       created_at: service.createdAt,
     })
-    if (error) alert('Nao foi possivel salvar o novo servico no banco de dados.')
+    if (error) notify('Nao foi possivel salvar o novo servico no banco de dados.')
   }
 
   const updateProviderService = async (serviceId, field, value) => {
@@ -1988,7 +2132,7 @@ function App() {
       position: 'position',
     }
     const { error } = await supabase.from('provider_services').update({ [columnMap[field]]: value }).eq('id', serviceId)
-    if (error) alert('Nao foi possivel salvar esse servico no banco de dados.')
+    if (error) notify('Nao foi possivel salvar esse servico no banco de dados.')
   }
 
   const moveProviderService = async (serviceId, direction) => {
@@ -2039,7 +2183,7 @@ function App() {
       position: resource.position,
       created_at: resource.createdAt,
     })
-    if (error) alert('Não foi possível salvar o novo recurso no banco de dados.')
+    if (error) notify('Não foi possível salvar o novo recurso no banco de dados.')
   }
 
   const updateProviderResource = async (resourceId, field, value) => {
@@ -2052,7 +2196,7 @@ function App() {
 
     const columnMap = { name: 'name', bio: 'bio', photoUrl: 'photo_url', active: 'active', position: 'position' }
     const { error } = await supabase.from('provider_resources').update({ [columnMap[field]]: value }).eq('id', resourceId)
-    if (error) alert('Não foi possível salvar esse recurso no banco de dados.')
+    if (error) notify('Não foi possível salvar esse recurso no banco de dados.')
   }
 
   const removeProviderResource = async (resourceId) => {
@@ -2061,7 +2205,7 @@ function App() {
       providerResources: current.providerResources.filter((resource) => resource.id !== resourceId),
     }))
     const { error } = await supabase.from('provider_resources').delete().eq('id', resourceId)
-    if (error) alert('Não foi possível remover esse recurso no banco de dados.')
+    if (error) notify('Não foi possível remover esse recurso no banco de dados.')
   }
 
   const removeProviderService = async (serviceId) => {
@@ -2073,7 +2217,7 @@ function App() {
       ),
     }))
     const { error } = await supabase.from('provider_services').delete().eq('id', serviceId)
-    if (error) alert('Nao foi possivel remover esse servico no banco de dados.')
+    if (error) notify('Nao foi possivel remover esse servico no banco de dados.')
   }
 
   const imageFileToBase64 = (file) =>
@@ -2098,17 +2242,34 @@ function App() {
       reader.readAsDataURL(file)
     })
 
+  const uploadImageAsset = async (file, folder) => {
+    try {
+      const extension = file.name.split('.').pop()?.toLowerCase() || 'jpg'
+      const path = `${folder}/${crypto.randomUUID()}.${extension}`
+      const { error } = await supabase.storage.from('public-assets').upload(path, file, {
+        cacheControl: '31536000',
+        contentType: file.type || 'image/jpeg',
+        upsert: false,
+      })
+      if (error) throw error
+      return supabase.storage.from('public-assets').getPublicUrl(path).data.publicUrl
+    } catch (error) {
+      console.warn('Storage indisponivel; usando base64 como fallback.', error.message)
+      return imageFileToBase64(file)
+    }
+  }
+
   const uploadPortfolioPhoto = async (serviceId, file, kind = 'foto') => {
     if (!file) return
     const targetPhotos = providerPhotos.filter((photo) => (serviceId ? photo.serviceId === serviceId : !photo.serviceId && photo.kind === kind))
     const limit = serviceId ? 6 : kind === 'banner' ? 6 : 10
     if (targetPhotos.length >= limit) {
-      alert(`Limite de ${limit} ${kind === 'banner' ? 'banners' : 'fotos'} atingido.`)
+      notify(`Limite de ${limit} ${kind === 'banner' ? 'banners' : 'fotos'} atingido.`)
       return
     }
 
     const id = crypto.randomUUID()
-    const imageBase64 = await imageFileToBase64(file)
+    const imageBase64 = await uploadImageAsset(file, `providers/${provider.id}/portfolio`)
     const photo = {
       id,
       providerId: provider.id,
@@ -2130,7 +2291,7 @@ function App() {
       kind,
       created_at: photo.createdAt,
     })
-    if (error) alert('Nao foi possivel salvar essa foto no banco de dados.')
+    if (error) notify('Nao foi possivel salvar essa foto no banco de dados.')
   }
 
   const movePortfolioPhoto = async (photoId, direction) => {
@@ -2165,7 +2326,7 @@ function App() {
       portfolioPhotos: current.portfolioPhotos.map((photo) => (photo.id === photoId ? { ...photo, caption } : photo)),
     }))
     const { error } = await supabase.from('portfolio_photos').update({ caption }).eq('id', photoId)
-    if (error) alert('Nao foi possivel salvar a legenda da foto.')
+    if (error) notify('Nao foi possivel salvar a legenda da foto.')
   }
 
   const removePortfolioPhoto = async (photoId) => {
@@ -2174,7 +2335,7 @@ function App() {
       portfolioPhotos: current.portfolioPhotos.filter((photo) => photo.id !== photoId),
     }))
     const { error } = await supabase.from('portfolio_photos').delete().eq('id', photoId)
-    if (error) alert('Nao foi possivel remover essa foto.')
+    if (error) notify('Nao foi possivel remover essa foto.')
   }
 
   const createPrivacyRequest = async (event) => {
@@ -2207,7 +2368,41 @@ function App() {
       status: 'aberta',
       created_at: createdAt,
     })
-    if (error) alert('A solicitação apareceu na tela, mas houve um erro ao salvar no banco de dados. Atualize a página para conferir se ficou salva.')
+    if (error) notify('A solicitação apareceu na tela, mas houve um erro ao salvar no banco de dados. Atualize a página para conferir se ficou salva.')
+  }
+
+  const submitReview = async (event) => {
+    event.preventDefault()
+    if (!thankYouBooking || !reviewForm.comment.trim()) return
+    const review = {
+      id: crypto.randomUUID(),
+      providerId: thankYouBooking.provider.id,
+      bookingId: thankYouBooking.id,
+      clientName: thankYouBooking.client,
+      contact: thankYouBooking.contact,
+      rating: Math.max(1, Math.min(5, Number(reviewForm.rating) || 5)),
+      comment: reviewForm.comment.trim(),
+      status: 'pendente',
+      createdAt: new Date().toISOString(),
+    }
+    updateData((current) => ({ ...current, reviews: [...(current.reviews || []), review] }))
+    const { error } = await supabase.from('booking_reviews').insert({
+      id: review.id,
+      provider_id: review.providerId,
+      booking_id: review.bookingId,
+      client_name: review.clientName,
+      contact: review.contact,
+      rating: review.rating,
+      comment: review.comment,
+      status: review.status,
+      created_at: review.createdAt,
+    })
+    if (error) {
+      setReviewMessage('Nao foi possivel salvar a avaliacao agora.')
+      return
+    }
+    setReviewForm({ rating: 5, comment: '' })
+    setReviewMessage('Obrigado. Sua avaliacao foi registrada para revisao.')
   }
 
   const toggleProvider = async (id) => {
@@ -2220,7 +2415,7 @@ function App() {
       .update({ active: nextActive, approval_status: nextApprovalStatus })
       .eq('id', id)
     if (error) {
-      alert('Não foi possível salvar essa alteração no banco de dados. Tente novamente.')
+      notify('Não foi possível salvar essa alteração no banco de dados. Tente novamente.')
       return false
     }
     updateData((current) => ({
@@ -2241,16 +2436,16 @@ function App() {
       .from('platform_settings')
       .update({ [BRAND_COLUMN_MAP[field]]: value })
       .eq('id', 1)
-    if (error) alert('Não foi possível salvar essa alteração de marca no banco de dados. Tente novamente.')
+    if (error) notify('Não foi possível salvar essa alteração de marca no banco de dados. Tente novamente.')
   }
 
   const getInviteLink = (targetProvider) => {
     const invite = data.clientInvites.find((item) => item.providerId === targetProvider.id && item.status === 'ativo')
     return invite
-      ? `${window.location.origin}${window.location.pathname}#cliente=${invite.token}`
-      : `${window.location.origin}${window.location.pathname}#agendar=${targetProvider.slug || targetProvider.id}`
+      ? getPublicPath('cliente', invite.token)
+      : getPublicPath('agendar', targetProvider.slug || targetProvider.id)
   }
-  const getStoreLink = (targetProvider) => `${window.location.origin}${window.location.pathname}#loja=${targetProvider.slug || targetProvider.id}`
+  const getStoreLink = (targetProvider) => getPublicPath('loja', targetProvider.slug || targetProvider.id)
 
   const buildWhatsAppLink = (client, targetProvider) => {
     const message = `Olá, ${client.name}! Vamos agendar seu próximo atendimento? ${getInviteLink(targetProvider)}`
@@ -2260,8 +2455,24 @@ function App() {
     return `https://wa.me/${phone}?text=${encodeURIComponent(message)}`
   }
 
-  const getProviderInviteLink = (invite) => `${window.location.origin}${window.location.pathname}#prestador=${invite.token}`
-  const getRepresentativeInviteLink = (invite) => `${window.location.origin}${window.location.pathname}#representante=${invite.token}`
+  // Import dinâmico: a lib de QR só entra no navegador de quem clicar em gerar,
+  // não no bundle inicial que todo cliente da loja pública baixa.
+  const generateStoreQrCode = async (targetProvider) => {
+    try {
+      const { default: QRCodeLib } = await import('qrcode')
+      const dataUrl = await QRCodeLib.toDataURL(getStoreLink(targetProvider), {
+        width: 512,
+        margin: 2,
+        color: { dark: '#111827', light: '#ffffff' },
+      })
+      setStoreQrCode(dataUrl)
+    } catch {
+      alert('Não foi possível gerar o código QR agora. Tente novamente.')
+    }
+  }
+
+  const getProviderInviteLink = (invite) => getPublicPath('prestador', invite.token)
+  const getRepresentativeInviteLink = (invite) => getPublicPath('representante', invite.token)
 
   const createProviderInvite = async (event) => {
     event.preventDefault()
@@ -2283,7 +2494,7 @@ function App() {
   const createClientInvite = async (event) => {
     event.preventDefault()
     if (!provider || provider.approvalStatus !== 'aprovado') {
-      alert('Somente prestadores aprovados podem gerar link de cliente.')
+      notify('Somente prestadores aprovados podem gerar link de cliente.')
       return
     }
 
@@ -2303,7 +2514,7 @@ function App() {
 
     updateData((current) => ({ ...current, clientInvites: [invite, ...current.clientInvites] }))
     setClientInviteForm({ contact: '' })
-    setClientInviteNotice(`${window.location.origin}${window.location.pathname}#cliente=${invite.token}`)
+    setClientInviteNotice(getPublicPath('cliente', invite.token))
 
     const { error } = await supabase.from('client_invites').insert({
       id: invite.id,
@@ -2480,7 +2691,7 @@ function App() {
       target_representative_user_id: representativeUserId || null,
     })
     if (error) {
-      alert(error.message)
+      notify(error.message)
       return false
     }
     updateData((current) => ({
@@ -2524,7 +2735,7 @@ function App() {
       current[providerId] ? { ...current, [providerId]: { ...current[providerId], landingStatus: 'publicado' } } : current,
     )
     const { error } = await supabase.from('providers').update({ landing_status: 'publicado' }).eq('id', providerId)
-    if (error) alert('Não foi possível publicar a página agora. Tente novamente.')
+    if (error) notify('Não foi possível publicar a página agora. Tente novamente.')
   }
 
   const saveInviteDraft = async (providerId) => {
@@ -2623,12 +2834,16 @@ function App() {
     if (error) setSavedNotice('Erro ao salvar no banco de dados. Tente novamente.')
   }
 
-  const uploadProviderLogo = (providerId, file) => {
+  const uploadProviderLogo = async (providerId, file) => {
     if (!file) return
 
-    const reader = new FileReader()
-    reader.onload = () => updateInviteDraft(providerId, 'logoUrl', reader.result)
-    reader.readAsDataURL(file)
+    updateInviteDraft(providerId, 'logoUrl', await uploadImageAsset(file, `providers/${providerId}/logos`))
+  }
+
+  const uploadProviderResourcePhoto = async (resourceId, file) => {
+    if (!file) return
+
+    updateProviderResource(resourceId, 'photoUrl', await uploadImageAsset(file, `providers/${provider.id}/resources`))
   }
 
   const createAnnouncement = async (title, message) => {
@@ -2640,7 +2855,7 @@ function App() {
       announcements: [{ id, title, message, active: true, createdAt }, ...current.announcements],
     }))
     const { error } = await supabase.from('platform_announcements').insert({ id, title, message, active: true, created_at: createdAt })
-    if (error) alert('Não foi possível salvar o comunicado no banco de dados.')
+    if (error) notify('Não foi possível salvar o comunicado no banco de dados.')
   }
 
   const toggleAnnouncement = async (id) => {
@@ -2651,7 +2866,7 @@ function App() {
       announcements: state.announcements.map((item) => (item.id === id ? { ...item, active: !item.active } : item)),
     }))
     const { error } = await supabase.from('platform_announcements').update({ active: !current.active }).eq('id', id)
-    if (error) alert('Não foi possível atualizar esse comunicado no banco de dados.')
+    if (error) notify('Não foi possível atualizar esse comunicado no banco de dados.')
   }
 
   const removeAnnouncement = async (id) => {
@@ -2660,23 +2875,49 @@ function App() {
       announcements: current.announcements.filter((item) => item.id !== id),
     }))
     const { error } = await supabase.from('platform_announcements').delete().eq('id', id)
-    if (error) alert('Não foi possível remover esse comunicado no banco de dados.')
+    if (error) notify('Não foi possível remover esse comunicado no banco de dados.')
   }
 
-  const uploadBrandLogo = (file) => {
-    if (!file) return
-
-    const reader = new FileReader()
-    reader.onload = () => updateBrand('logoUrl', reader.result)
-    reader.readAsDataURL(file)
+  const createFinanceEntry = async () => {
+    const amount = Number(financeEntryForm.amount)
+    if (!financeEntryForm.category || !financeEntryForm.description.trim() || !(amount > 0) || !financeEntryForm.date) return
+    const id = crypto.randomUUID()
+    const createdAt = new Date().toISOString()
+    const entry = { id, entryType: financeEntryForm.entryType, category: financeEntryForm.category, description: financeEntryForm.description.trim(), amount, date: financeEntryForm.date, createdAt }
+    updateData((current) => ({ ...current, financeEntries: [entry, ...current.financeEntries] }))
+    const { error } = await supabase.from('finance_entries').insert({
+      id, entry_type: entry.entryType, category: entry.category, description: entry.description, amount: entry.amount, date: entry.date, created_at: createdAt,
+    })
+    if (error) notify('Não foi possível salvar esse lançamento no banco de dados.')
+    setFinanceEntryForm({ entryType: 'despesa', category: FINANCE_CATEGORY_OPTIONS.despesa[0], description: '', amount: '', date: new Date().toISOString().slice(0, 10) })
   }
 
-  const uploadBrandLogotype = (file) => {
+  const updateFinanceEntry = async (id, field, value) => {
+    updateData((current) => ({
+      ...current,
+      financeEntries: current.financeEntries.map((entry) => (entry.id === id ? { ...entry, [field]: value } : entry)),
+    }))
+    const columnMap = { entryType: 'entry_type', category: 'category', description: 'description', amount: 'amount', date: 'date' }
+    const { error } = await supabase.from('finance_entries').update({ [columnMap[field]]: value }).eq('id', id)
+    if (error) notify('Não foi possível atualizar esse lançamento no banco de dados.')
+  }
+
+  const removeFinanceEntry = async (id) => {
+    updateData((current) => ({ ...current, financeEntries: current.financeEntries.filter((entry) => entry.id !== id) }))
+    const { error } = await supabase.from('finance_entries').delete().eq('id', id)
+    if (error) notify('Não foi possível remover esse lançamento no banco de dados.')
+  }
+
+  const uploadBrandLogo = async (file) => {
     if (!file) return
 
-    const reader = new FileReader()
-    reader.onload = () => updateBrand('logotypeUrl', reader.result)
-    reader.readAsDataURL(file)
+    updateBrand('logoUrl', await uploadImageAsset(file, 'platform/brand'))
+  }
+
+  const uploadBrandLogotype = async (file) => {
+    if (!file) return
+
+    updateBrand('logotypeUrl', await uploadImageAsset(file, 'platform/brand'))
   }
 
   const shareProviderLink = async (targetProvider) => {
@@ -2693,6 +2934,19 @@ function App() {
     }
 
     window.open(`https://wa.me/?text=${encodeURIComponent(text)}`, '_blank', 'noopener,noreferrer')
+  }
+
+  const shareProviderLinkOn = (targetProvider, channel, linkType = 'invite') => {
+    const url = linkType === 'store' ? getStoreLink(targetProvider) : getInviteLink(targetProvider)
+    const text = `Ola! Voce pode agendar seu atendimento comigo por este link: ${url}`
+    const encodedUrl = encodeURIComponent(url)
+    const encodedText = encodeURIComponent(text)
+    const shareUrls = {
+      facebook: `https://www.facebook.com/sharer/sharer.php?u=${encodedUrl}`,
+      telegram: `https://t.me/share/url?url=${encodedUrl}&text=${encodedText}`,
+      whatsapp: `https://wa.me/?text=${encodedText}`,
+    }
+    window.open(shareUrls[channel], '_blank', 'noopener,noreferrer')
   }
 
   const login = (role, providerId = 'p1', email = '', access = {}, user = null) => {
@@ -2900,7 +3154,7 @@ function App() {
   if (loading) {
     return (
       <main className="loginShell">
-        <section className="loginPanel">
+        <section className="loginPanel systemStatePanel">
           <div className="brand loginBrand">
             <div className="brandMark"><CalendarCheck size={20} /></div>
             <div>
@@ -2917,7 +3171,7 @@ function App() {
   if (loadError || !data) {
     return (
       <main className="loginShell">
-        <section className="loginPanel">
+        <section className="loginPanel systemStatePanel">
           <div className="brand loginBrand">
             <div className="brandMark"><AlertCircle size={20} /></div>
             <div>
@@ -2936,6 +3190,7 @@ function App() {
     const invalidPublicLink = getLinkedProviderId()
     return (
       <main className="loginShell" style={{ '--accent': data.brand.accent }}>
+        {renderToast()}
         <section className="loginPanel">
           <aside className="loginContext">
             {data.brand.logotypeUrl ? (
@@ -3021,12 +3276,12 @@ function App() {
     const visibleTestimonials = (heroProvider?.testimonials || []).filter((item) => item?.name || item?.text)
     const whatsappLink = whatsappHref(heroProvider?.contactChannels?.whatsapp, heroProvider?.name)
     const instagramLink = instagramHref(heroProvider?.contactChannels?.instagram)
-    const hasLocationInfo = Boolean(heroProvider?.neighborhood || heroProvider?.address || heroProvider?.serviceMode)
+    const hasLocationInfo = Boolean(heroProvider?.neighborhood || heroProvider?.address)
     const serviceModeLabel = {
       presencial: 'Atendimento presencial',
       online: 'Atendimento online',
       presencial_online: 'Presencial e online',
-      domiciliar: 'Atendimento em domicilio',
+      domiciliar: 'Atendimento em domicílio',
     }[heroProvider?.serviceMode] || heroProvider?.serviceMode
     return (
       <>
@@ -3094,6 +3349,23 @@ function App() {
               <span>Servico <strong>{thankYouBooking.service?.name}</strong></span>
               <span>Horario <strong>{formatDate(thankYouBooking.date)} as {thankYouBooking.time}</strong></span>
             </div>
+            <form className="reviewForm" onSubmit={submitReview}>
+              <strong>Avalie sua experiencia</strong>
+              <label>Nota
+                <select value={reviewForm.rating} onChange={(event) => setReviewForm({ ...reviewForm, rating: Number(event.target.value) })}>
+                  <option value="5">5 - Excelente</option>
+                  <option value="4">4 - Boa</option>
+                  <option value="3">3 - Regular</option>
+                  <option value="2">2 - Ruim</option>
+                  <option value="1">1 - Muito ruim</option>
+                </select>
+              </label>
+              <label>Comentario
+                <textarea value={reviewForm.comment} onChange={(event) => setReviewForm({ ...reviewForm, comment: event.target.value })} />
+              </label>
+              <button type="submit">Enviar avaliacao</button>
+              {reviewMessage && <small>{reviewMessage}</small>}
+            </form>
             <button type="button" className="secondaryButton" onClick={() => setThankYouBooking(null)}>
               Fazer outro agendamento
             </button>
@@ -3132,7 +3404,8 @@ function App() {
                     trackAnalyticsEvent('visualizou_servico', bookingService)
                     trackAnalyticsEvent('iniciou_agendamento', bookingService)
                     trackExternalLandingEvent('start_booking', heroProvider)
-                    window.location.hash = `agendar=${heroProvider.slug || heroProvider.id}`
+                    window.history.pushState(null, '', `/agendar/${heroProvider.slug || heroProvider.id}`)
+                    resolvePublicRoute(data)
                     setPublicEntryType('agendar')
                   }}
                 >
@@ -3155,7 +3428,7 @@ function App() {
             <h3>{serviceModeLabel || 'Como atendemos'}</h3>
             <div className="locationGrid">
               {heroProvider?.neighborhood && <span><strong>Bairro</strong>{heroProvider.neighborhood}</span>}
-              {heroProvider?.address && <span><strong>Endereco</strong>{heroProvider.address}</span>}
+              {heroProvider?.address && <span><strong>Endereço</strong>{heroProvider.address}</span>}
               {serviceModeLabel && (heroProvider?.neighborhood || heroProvider?.address) && <span><strong>Formato</strong>{serviceModeLabel}</span>}
             </div>
           </section>
@@ -3318,11 +3591,12 @@ function App() {
                       trackExternalLandingEvent('start_booking', item.provider)
                       setBookingForm({ ...bookingForm, serviceId: item.id, resourceId: '' })
                       setSuccessMessage('')
-                      window.location.hash = `agendar=${item.provider.slug || item.provider.id}`
+                      window.history.pushState(null, '', `/agendar/${item.provider.slug || item.provider.id}`)
+                      resolvePublicRoute(data)
                       setPublicEntryType('agendar')
                     }}
                   >
-                    {servicePhoto ? <img src={servicePhoto.imageBase64} alt="" /> : <div className="cardImagePlaceholder"><Image size={28} /></div>}
+                    {servicePhoto ? <img src={servicePhoto.imageBase64} alt="" /> : <div className="cardImagePlaceholder"><Image size={24} /><span>Sem foto</span></div>}
                     <strong>{item.name}</strong>
                     <span>{item.description || item.provider.category}</span>
                     <small>{formatServiceDuration(item)}</small>
@@ -3343,9 +3617,17 @@ function App() {
                 <h2>{multiProvider && publicProviderId && !storeEntry ? 'Agende seu atendimento' : 'Escolha um serviço'}</h2>
               </div>
               {multiProvider && (!publicProviderId || storeEntry) && (
-                <div className="search">
+                <div className="searchFilters">
+                  <div className="search">
                   <Search size={17} />
-                  <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Buscar serviço ou cidade" />
+                  <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Buscar servico ou cidade" />
+                  </div>
+                  <select value={categoryFilter} onChange={(event) => setCategoryFilter(event.target.value)} aria-label="Filtrar por categoria">
+                    <option value="todas">Todas as categorias</option>
+                    {publicCategories.map((category) => (
+                      <option key={category} value={category}>{category}</option>
+                    ))}
+                  </select>
                 </div>
               )}
             </div>
@@ -3359,7 +3641,7 @@ function App() {
                     className={isAdded ? 'provider selected serviceCardPublic' : 'provider serviceCardPublic'}
                     key={item.id}
                   >
-                    {servicePhoto ? <img src={servicePhoto.imageBase64} alt="" /> : <div className="cardImagePlaceholder"><Image size={28} /></div>}
+                    {servicePhoto ? <img src={servicePhoto.imageBase64} alt="" /> : <div className="cardImagePlaceholder"><Image size={24} /><span>Sem foto</span></div>}
                     {isPrimary && <span className="primaryBadge">Define o horário</span>}
                     <strong>{item.name}</strong>
                     <span>{multiProvider ? `${item.provider.name} • ${item.provider.category} • ${item.provider.city}` : (item.description || heroProvider?.category)}</span>
@@ -3620,6 +3902,7 @@ function App() {
           '--provider-bg': activeProvider.theme?.background,
         }}
       >
+        {renderToast()}
         <div className={`publicStorefrontInner storefrontStyle-${activeProvider.theme?.style || 'profissional'} publicEntry-${publicEntryType}`}>
           {renderPublicSections(false)}
 
@@ -3636,6 +3919,7 @@ function App() {
     const isDraftLanding = unavailableProvider?.landingStatus === 'rascunho'
     return (
       <main className="publicStorefront">
+        {renderToast()}
         <div className={`publicStorefrontInner storefrontStyle-${unavailableProvider?.theme?.style || 'profissional'} publicEntry-${publicEntryType}`}>
           <div className="panel">
             <p className="eyebrow">{isDraftLanding ? 'Página ainda não publicada' : 'Agendamento indisponível'}</p>
@@ -3655,6 +3939,7 @@ function App() {
 
   return (
     <main className={`shell${sidebarCollapsed ? ' sidebarCollapsed' : ''}`} style={{ '--accent': data.brand.accent, '--sidebar-logotype-height': `${data.brand.logotypeSize || 64}px` }}>
+      {renderToast()}
       <aside className={`sidebar${sidebarCollapsed ? ' collapsed' : ''}`}>
         {(data.brand.logotypeUrl || data.brand.logoUrl) && <div className="brand sidebarBrand" title={data.brand.name}>
           {data.brand.logotypeUrl && <img className="sidebarLogotype" src={data.brand.logotypeUrl} alt={data.brand.name} />}
@@ -3731,6 +4016,12 @@ function App() {
                 onClick={() => { setView('admin'); setAdminTab('representantes') }}
               >
                 Rede de representantes
+              </button>}
+              {session.isMasterAdmin && <button
+                className={view === 'admin' && adminTab === 'contabilidade' ? 'active' : ''}
+                onClick={() => { setView('admin'); setAdminTab('contabilidade') }}
+              >
+                Contabilidade
               </button>}
               <button
                 className={view === 'admin' && adminTab === 'privacidade' ? 'active' : ''}
@@ -3815,7 +4106,7 @@ function App() {
             </button>
           </nav>
         ) : (
-          <div className="currentArea"><CalendarDays size={18} /><div><span>Área atual</span><strong>Cliente</strong></div></div>
+          <div className="currentArea"><CalendarDays size={18} /><div><span>Ãrea atual</span><strong>Cliente</strong></div></div>
         )}
 
       </aside>
@@ -3834,6 +4125,7 @@ function App() {
                     configuracoes: 'Configurações da plataforma',
                     privacidade: 'Privacidade e LGPD',
                     representantes: 'Gestão de representantes',
+                    contabilidade: 'Contabilidade',
                   }[adminTab])
                 : view === 'representante'
                   ? ({ 'visao-geral': 'Visão geral da carteira', carteira: 'Gestão de prestadores', convites: 'Convites de prestadores' }[representativeTab])
@@ -3938,6 +4230,7 @@ function App() {
               {providerTab === 'loja' && (
               <>
               <div className="inviteEditor">
+              <div className="inviteEditorForm">
                 {hasUnsavedChanges && (
                   <div className="unsavedBanner">
                     <AlertCircle size={16} />
@@ -3945,12 +4238,28 @@ function App() {
                   </div>
                 )}
 
+                <section className="storeSetupSummary" aria-label="Resumo da página pública">
+                  <div>
+                    <p className="eyebrow">Minha loja</p>
+                    <h3>Sua página pronta para vender</h3>
+                    <span>{storeSetupDone} de {storeSetupItems.length} pontos principais completos</span>
+                  </div>
+                  <div className="storeSetupChips">
+                    {storeSetupItems.map((item) => (
+                      <span key={item.label} className={item.done ? 'done' : ''}>
+                        <CheckCircle2 size={15} />
+                        {item.label}
+                      </span>
+                    ))}
+                  </div>
+                </section>
+
                 <div className="profileTabs" role="tablist" aria-label="Seções do perfil do prestador">
-                  <button type="button" className={providerProfileTab === 'identidade' ? 'active' : ''} onClick={() => setProviderProfileTab('identidade')}>Identidade</button>
-                  <button type="button" className={providerProfileTab === 'vitrine' ? 'active' : ''} onClick={() => setProviderProfileTab('vitrine')}>Vitrine</button>
-                  <button type="button" className={providerProfileTab === 'recursos' ? 'active' : ''} onClick={() => setProviderProfileTab('recursos')}>Recursos</button>
-                  <button type="button" className={providerProfileTab === 'conversao' ? 'active' : ''} onClick={() => setProviderProfileTab('conversao')}>Convencer o cliente</button>
-                  <button type="button" className={providerProfileTab === 'convite' ? 'active' : ''} onClick={() => setProviderProfileTab('convite')}>Convite</button>
+                  <button type="button" className={providerProfileTab === 'identidade' ? 'active' : ''} onClick={() => setProviderProfileTab('identidade')}>Loja</button>
+                  <button type="button" className={providerProfileTab === 'vitrine' ? 'active' : ''} onClick={() => setProviderProfileTab('vitrine')}>Fotos e textos</button>
+                  <button type="button" className={providerProfileTab === 'recursos' ? 'active' : ''} onClick={() => setProviderProfileTab('recursos')}>Equipe</button>
+                  <button type="button" className={providerProfileTab === 'conversao' ? 'active' : ''} onClick={() => setProviderProfileTab('conversao')}>Confiança</button>
+                  <button type="button" className={providerProfileTab === 'convite' ? 'active' : ''} onClick={() => setProviderProfileTab('convite')}>Compartilhar</button>
                 </div>
 
                 {providerProfileTab === 'identidade' && (
@@ -3990,52 +4299,84 @@ function App() {
                         </button>
                       )}
                     </div>
-                    <div className="themeEditor identityThemeEditor">
-                      <label>Cor principal
-                        <input
-                          type="color"
-                          value={inviteDraft.theme?.accent || data.brand.accent}
-                          onChange={(event) => updateThemeDraft(provider.id, 'accent', event.target.value)}
-                        />
-                      </label>
-                      <label>Cor de fundo
-                        <input
-                          type="color"
-                          value={inviteDraft.theme?.background || '#111827'}
-                          onChange={(event) => updateThemeDraft(provider.id, 'background', event.target.value)}
-                        />
-                      </label>
-                      <label>Estilo
-                        <div className="choiceGroup" role="radiogroup" aria-label="Estilo da landing">
-                          {[
-                            ['profissional', 'Profissional'],
-                            ['acolhedor', 'Acolhedor'],
-                            ['premium', 'Premium'],
-                          ].map(([value, label]) => (
-                            <button
-                              aria-checked={(inviteDraft.theme?.style || 'profissional') === value}
-                              className={(inviteDraft.theme?.style || 'profissional') === value ? 'active' : ''}
-                              key={value}
-                              onClick={() => updateThemeDraft(provider.id, 'style', value)}
-                              role="radio"
-                              type="button"
+                    <details className="collapsibleBlock" open={Boolean(inviteDraft.neighborhood || inviteDraft.address)}>
+                      <summary>Onde atende</summary>
+                      <div className="highlightEditor">
+                        <div className="inlineFields">
+                          <label>Bairro
+                            <input
+                              placeholder="Ex.: Savassi"
+                              value={inviteDraft.neighborhood || ''}
+                              onChange={(event) => updateInviteDraft(provider.id, 'neighborhood', event.target.value)}
+                            />
+                          </label>
+                          <label>Modo de atendimento
+                            <select
+                              value={inviteDraft.serviceMode || 'presencial_online'}
+                              onChange={(event) => updateInviteDraft(provider.id, 'serviceMode', event.target.value)}
                             >
-                              {label}
-                            </button>
-                          ))}
+                              {SERVICE_MODE_OPTIONS.map(([value, label]) => <option key={value} value={value}>{label}</option>)}
+                            </select>
+                          </label>
                         </div>
-                      </label>
-                      <label>Tema público
-                        <select
-                          value={inviteDraft.theme?.publicAppearance || 'system'}
-                          onChange={(event) => updateThemeDraft(provider.id, 'publicAppearance', event.target.value)}
-                        >
-                          <option value="system">Automático</option>
-                          <option value="light">Claro</option>
-                          <option value="dark">Escuro</option>
-                        </select>
-                      </label>
-                    </div>
+                        <label>Endereço ou referência
+                          <input
+                            placeholder="Rua, número, complemento ou referência de atendimento"
+                            value={inviteDraft.address || ''}
+                            onChange={(event) => updateInviteDraft(provider.id, 'address', event.target.value)}
+                          />
+                        </label>
+                      </div>
+                    </details>
+                    <details className="collapsibleBlock" open={Boolean(inviteDraft.theme?.accent || inviteDraft.theme?.background || inviteDraft.theme?.style)}>
+                      <summary>Aparência da página</summary>
+                      <div className="themeEditor identityThemeEditor">
+                        <label>Cor principal
+                          <input
+                            type="color"
+                            value={inviteDraft.theme?.accent || data.brand.accent}
+                            onChange={(event) => updateThemeDraft(provider.id, 'accent', event.target.value)}
+                          />
+                        </label>
+                        <label>Cor de fundo
+                          <input
+                            type="color"
+                            value={inviteDraft.theme?.background || '#111827'}
+                            onChange={(event) => updateThemeDraft(provider.id, 'background', event.target.value)}
+                          />
+                        </label>
+                        <label>Estilo
+                          <div className="choiceGroup" role="radiogroup" aria-label="Estilo da landing">
+                            {[
+                              ['profissional', 'Profissional'],
+                              ['acolhedor', 'Acolhedor'],
+                              ['premium', 'Premium'],
+                            ].map(([value, label]) => (
+                              <button
+                                aria-checked={(inviteDraft.theme?.style || 'profissional') === value}
+                                className={(inviteDraft.theme?.style || 'profissional') === value ? 'active' : ''}
+                                key={value}
+                                onClick={() => updateThemeDraft(provider.id, 'style', value)}
+                                role="radio"
+                                type="button"
+                              >
+                                {label}
+                              </button>
+                            ))}
+                          </div>
+                        </label>
+                        <label>Tema público
+                          <select
+                            value={inviteDraft.theme?.publicAppearance || 'system'}
+                            onChange={(event) => updateThemeDraft(provider.id, 'publicAppearance', event.target.value)}
+                          >
+                            <option value="system">Automático</option>
+                            <option value="light">Claro</option>
+                            <option value="dark">Escuro</option>
+                          </select>
+                        </label>
+                      </div>
+                    </details>
                     <div className="highlightEditor identityPublishBox">
                       <div>
                         <p className="eyebrow">Publicacao</p>
@@ -4100,150 +4441,149 @@ function App() {
                       />
                     </label>
 
-                    <div className="highlightEditor">
-                      <div>
-                        <p className="eyebrow">Local e atendimento</p>
-                        <h3>Onde o cliente será atendido</h3>
-                      </div>
-                      <div className="inlineFields">
-                        <label>Bairro
-                          <input
-                            placeholder="Ex.: Savassi"
-                            value={inviteDraft.neighborhood || ''}
-                            onChange={(event) => updateInviteDraft(provider.id, 'neighborhood', event.target.value)}
-                          />
-                        </label>
-                        <label>Modo de atendimento
-                          <select
-                            value={inviteDraft.serviceMode || 'presencial_online'}
-                            onChange={(event) => updateInviteDraft(provider.id, 'serviceMode', event.target.value)}
-                          >
-                            {SERVICE_MODE_OPTIONS.map(([value, label]) => <option key={value} value={value}>{label}</option>)}
-                          </select>
-                        </label>
-                      </div>
-                      <label>Endereço ou referência
-                        <input
-                          placeholder="Rua, número, complemento ou referência de atendimento"
-                          value={inviteDraft.address || ''}
-                          onChange={(event) => updateInviteDraft(provider.id, 'address', event.target.value)}
-                        />
-                      </label>
-                    </div>
-                    <div className="serviceEditor">
-                      <div className="sectionTools">
+                    <details className="collapsibleBlock" open={providerBannerPhotos.length > 0 || providerGeneralPhotos.length > 0 || (inviteDraft.galleryPhotos || []).length > 0}>
+                      <summary>Fotos da página pública</summary>
+                      <div className="imageGuidePanel">
                         <div>
-                          <h3>Banners</h3>
-                          <span className="sectionSub">O primeiro banner da lista aparece como imagem de abertura da pagina publica. Use a ordem pra decidir qual fica em destaque.</span>
+                          <p className="eyebrow">Onde aparece</p>
+                          <h3>Use cada imagem em um lugar diferente da página</h3>
+                          <span className="sectionSub">Banner abre a página. Fotos da vitrine mostram ambiente, resultado ou bastidores. Links da internet servem só para imagens já publicadas fora do sistema.</span>
                         </div>
-                        <label className="photoUpload inlineUpload"><Image size={18} /> Adicionar banner
-                          <input accept="image/*" type="file" onChange={(event) => uploadPortfolioPhoto(null, event.target.files?.[0], 'banner')} />
-                        </label>
-                      </div>
-                      <div className="photoStrip">
-                        {providerBannerPhotos.map((photo, index, list) => (
-                          <div className="photoTile" key={photo.id}>
-                            <img src={photo.imageBase64} alt="" />
-                            <input placeholder="Legenda" value={photo.caption} onChange={(event) => updatePortfolioPhotoCaption(photo.id, event.target.value)} />
-                            <div className="photoTileActions">
-                              <button type="button" title="Mover para cima" aria-label="Mover para cima" disabled={index === 0} onClick={() => movePortfolioPhoto(photo.id, -1)}><ArrowUp size={14} /></button>
-                              <button type="button" title="Mover para baixo" aria-label="Mover para baixo" disabled={index === list.length - 1} onClick={() => movePortfolioPhoto(photo.id, 1)}><ArrowDown size={14} /></button>
-                              <button className="dangerButton" type="button" onClick={() => removePortfolioPhoto(photo.id)}><Trash2 size={14} /></button>
-                            </div>
+                        <div className="imageGuidePreview" aria-hidden="true">
+                          <span className="imageGuideHero">Banner principal</span>
+                          <div>
+                            <span>Texto da loja</span>
+                            <i>Fotos da vitrine</i>
+                            <i>Fotos da internet</i>
                           </div>
-                        ))}
+                        </div>
                       </div>
-                    </div>
 
-                    <div className="serviceEditor">
-                      <div className="sectionTools">
+                      <div className="imageUploadGroup">
+                        <p className="eyebrow">Enviar do computador ou celular</p>
+                        <h3>Uploads diretos</h3>
+                      </div>
+
+                      <div className="serviceEditor imageManagerBlock">
+                        <div className="sectionTools">
+                          <div>
+                            <h3>Foto principal da sua loja</h3>
+                            <span className="sectionSub">Imagem grande no topo da página pública. Use para fachada, equipe, ambiente ou resultado principal.</span>
+                          </div>
+                          <label className="photoUpload inlineUpload"><Image size={18} /> Escolher foto principal
+                            <input accept="image/*" type="file" onChange={(event) => uploadPortfolioPhoto(null, event.target.files?.[0], 'banner')} />
+                          </label>
+                        </div>
+                        <div className="photoStrip">
+                          {providerBannerPhotos.map((photo, index, list) => (
+                            <div className="photoTile" key={photo.id}>
+                              <img src={photo.imageBase64} alt="" />
+                              <input placeholder="Legenda" value={photo.caption} onChange={(event) => updatePortfolioPhotoCaption(photo.id, event.target.value)} />
+                              <div className="photoTileActions">
+                                <button type="button" title="Mover para cima" aria-label="Mover para cima" disabled={index === 0} onClick={() => movePortfolioPhoto(photo.id, -1)}><ArrowUp size={14} /></button>
+                                <button type="button" title="Mover para baixo" aria-label="Mover para baixo" disabled={index === list.length - 1} onClick={() => movePortfolioPhoto(photo.id, 1)}><ArrowDown size={14} /></button>
+                                <button className="dangerButton" type="button" onClick={() => removePortfolioPhoto(photo.id)}><Trash2 size={14} /></button>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+
+                      <details className="collapsibleBlock nestedImageOptions" open={providerGeneralPhotos.length > 0}>
+                        <summary>Mais fotos (galeria)</summary>
+                      <div className="serviceEditor imageManagerBlock">
+                        <div className="sectionTools">
+                          <div>
+                            <h3>Fotos da vitrine</h3>
+                            <span className="sectionSub">Galeria da página pública. Use para mostrar trabalhos, espaço, equipamentos ou antes/depois.</span>
+                          </div>
+                          <label className="photoUpload inlineUpload"><Image size={18} /> Adicionar foto
+                            <input accept="image/*" type="file" onChange={(event) => uploadPortfolioPhoto(null, event.target.files?.[0])} />
+                          </label>
+                        </div>
+                        <div className="photoStrip">
+                          {providerGeneralPhotos.map((photo, index, list) => (
+                            <div className="photoTile" key={photo.id}>
+                              <img src={photo.imageBase64} alt="" />
+                              <input placeholder="Legenda" value={photo.caption} onChange={(event) => updatePortfolioPhotoCaption(photo.id, event.target.value)} />
+                              <div className="photoTileActions">
+                                <button type="button" title="Mover para cima" aria-label="Mover para cima" disabled={index === 0} onClick={() => movePortfolioPhoto(photo.id, -1)}><ArrowUp size={14} /></button>
+                                <button type="button" title="Mover para baixo" aria-label="Mover para baixo" disabled={index === list.length - 1} onClick={() => movePortfolioPhoto(photo.id, 1)}><ArrowDown size={14} /></button>
+                                <button className="dangerButton" type="button" onClick={() => removePortfolioPhoto(photo.id)}><Trash2 size={14} /></button>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                      </details>
+
+                      <details className="collapsibleBlock nestedImageOptions" open={(inviteDraft.galleryPhotos || []).length > 0}>
+                        <summary>Usar foto que já está na internet (avançado)</summary>
+                      <div className="highlightEditor externalPhotoBlock">
                         <div>
-                          <h3>Fotos da vitrine</h3>
-                          <span className="sectionSub">Aparecem na sua página pública, junto com o texto acima. Use a ordem pra decidir qual aparece primeiro.</span>
+                          <p className="eyebrow">Usar imagem já publicada</p>
+                          <h3>Fotos que já estão na internet</h3>
                         </div>
-                        <label className="photoUpload inlineUpload"><Image size={18} /> Adicionar foto
-                          <input accept="image/*" type="file" onChange={(event) => uploadPortfolioPhoto(null, event.target.files?.[0])} />
-                        </label>
-                      </div>
-                      <div className="photoStrip">
-                        {providerGeneralPhotos.map((photo, index, list) => (
-                          <div className="photoTile" key={photo.id}>
-                            <img src={photo.imageBase64} alt="" />
-                            <input placeholder="Legenda" value={photo.caption} onChange={(event) => updatePortfolioPhotoCaption(photo.id, event.target.value)} />
-                            <div className="photoTileActions">
-                              <button type="button" title="Mover para cima" aria-label="Mover para cima" disabled={index === 0} onClick={() => movePortfolioPhoto(photo.id, -1)}><ArrowUp size={14} /></button>
-                              <button type="button" title="Mover para baixo" aria-label="Mover para baixo" disabled={index === list.length - 1} onClick={() => movePortfolioPhoto(photo.id, 1)}><ArrowDown size={14} /></button>
-                              <button className="dangerButton" type="button" onClick={() => removePortfolioPhoto(photo.id)}><Trash2 size={14} /></button>
+                        <p className="privacyHint">
+                          Use esta opção só quando a imagem já tiver um link público. Para enviar arquivo do computador ou celular, use os uploads diretos acima.
+                        </p>
+                        <div className="faqEditorList">
+                          {(inviteDraft.galleryPhotos || []).map((photo, index) => (
+                            <div className="faqEditorItem" key={`${photo.url}-${index}`}>
+                              <input
+                                placeholder="Cole aqui o link da foto (ex.: https://...)"
+                                value={photo.url || ''}
+                                onChange={(event) => updateInviteDraft(provider.id, 'galleryPhotos', (inviteDraft.galleryPhotos || []).map((item, itemIndex) => itemIndex === index ? { ...item, url: event.target.value } : item))}
+                              />
+                              <input
+                                placeholder="Legenda curta"
+                                value={photo.caption || ''}
+                                onChange={(event) => updateInviteDraft(provider.id, 'galleryPhotos', (inviteDraft.galleryPhotos || []).map((item, itemIndex) => itemIndex === index ? { ...item, caption: event.target.value } : item))}
+                              />
+                              <button className="dangerButton" type="button" title="Remover imagem" aria-label="Remover imagem" onClick={() => updateInviteDraft(provider.id, 'galleryPhotos', (inviteDraft.galleryPhotos || []).filter((_, itemIndex) => itemIndex !== index))}><Trash2 size={16} /></button>
                             </div>
-                          </div>
-                        ))}
+                          ))}
+                        </div>
+                        <button
+                          className="secondaryButton compactButton"
+                          type="button"
+                          onClick={() => updateInviteDraft(provider.id, 'galleryPhotos', [...(inviteDraft.galleryPhotos || []), { url: '', caption: '' }])}
+                        >
+                          <Plus size={16} /> Adicionar imagem
+                        </button>
                       </div>
-                    </div>
+                      </details>
+                    </details>
 
-                    <div className="highlightEditor">
-                      <div>
-                        <p className="eyebrow">Destaques</p>
-                        <h3>Chips da vitrine</h3>
+                    <details className="collapsibleBlock" open={(inviteDraft.highlights || []).length > 0}>
+                      <summary>Destaques</summary>
+                      <div className="highlightEditor">
+                        <div className="chips">
+                          {(inviteDraft.highlights || []).map((highlight) => (
+                            <button
+                              key={highlight}
+                              type="button"
+                              onClick={() => updateInviteDraft(provider.id, 'highlights', inviteDraft.highlights.filter((item) => item !== highlight))}
+                            >
+                              {highlight} <Trash2 size={14} />
+                            </button>
+                          ))}
+                        </div>
+                        <form
+                          className="inlineAdd"
+                          onSubmit={(event) => {
+                            event.preventDefault()
+                            const value = event.currentTarget.elements.highlight.value.trim()
+                            if (!value) return
+                            updateInviteDraft(provider.id, 'highlights', [...(inviteDraft.highlights || []), value])
+                            event.currentTarget.reset()
+                          }}
+                        >
+                          <input name="highlight" maxLength="36" placeholder="Ex.: Atende em domicílio" />
+                          <button type="submit">Adicionar</button>
+                        </form>
                       </div>
-                      <div className="chips">
-                        {(inviteDraft.highlights || []).map((highlight) => (
-                          <button
-                            key={highlight}
-                            type="button"
-                            onClick={() => updateInviteDraft(provider.id, 'highlights', inviteDraft.highlights.filter((item) => item !== highlight))}
-                          >
-                            {highlight} <Trash2 size={14} />
-                          </button>
-                        ))}
-                      </div>
-                      <form
-                        className="inlineAdd"
-                        onSubmit={(event) => {
-                          event.preventDefault()
-                          const value = event.currentTarget.elements.highlight.value.trim()
-                          if (!value) return
-                          updateInviteDraft(provider.id, 'highlights', [...(inviteDraft.highlights || []), value])
-                          event.currentTarget.reset()
-                        }}
-                      >
-                        <input name="highlight" maxLength="36" placeholder="Ex.: Atende em domicilio" />
-                        <button type="submit">Adicionar</button>
-                      </form>
-                    </div>
-
-                    <div className="highlightEditor">
-                      <div>
-                        <p className="eyebrow">Mais fotos</p>
-                        <h3>Fotos que já estão na internet</h3>
-                      </div>
-                      <p className="privacyHint">
-                        Aqui você cola o <strong>link</strong> de uma foto que já esteja publicada em algum lugar (por exemplo, uma foto do seu perfil do Instagram ou do Google Fotos) — não é upload direto de arquivo. Pra enviar uma foto do seu computador ou celular direto, use "Fotos da vitrine" logo acima.
-                      </p>
-                      <div className="faqEditorList">
-                        {(inviteDraft.galleryPhotos || []).map((photo, index) => (
-                          <div className="faqEditorItem" key={`${photo.url}-${index}`}>
-                            <input
-                              placeholder="Cole aqui o link da foto (ex.: https://...)"
-                              value={photo.url || ''}
-                              onChange={(event) => updateInviteDraft(provider.id, 'galleryPhotos', (inviteDraft.galleryPhotos || []).map((item, itemIndex) => itemIndex === index ? { ...item, url: event.target.value } : item))}
-                            />
-                            <input
-                              placeholder="Legenda curta"
-                              value={photo.caption || ''}
-                              onChange={(event) => updateInviteDraft(provider.id, 'galleryPhotos', (inviteDraft.galleryPhotos || []).map((item, itemIndex) => itemIndex === index ? { ...item, caption: event.target.value } : item))}
-                            />
-                            <button className="dangerButton" type="button" title="Remover imagem" aria-label="Remover imagem" onClick={() => updateInviteDraft(provider.id, 'galleryPhotos', (inviteDraft.galleryPhotos || []).filter((_, itemIndex) => itemIndex !== index))}><Trash2 size={16} /></button>
-                          </div>
-                        ))}
-                      </div>
-                      <button
-                        className="secondaryButton compactButton"
-                        type="button"
-                        onClick={() => updateInviteDraft(provider.id, 'galleryPhotos', [...(inviteDraft.galleryPhotos || []), { url: '', caption: '' }])}
-                      >
-                        <Plus size={16} /> Adicionar imagem
-                      </button>
-                    </div>
+                    </details>
 
                     <label className="checkLabel">
                       <input
@@ -4268,7 +4608,31 @@ function App() {
                         <button onClick={() => navigator.clipboard.writeText(getStoreLink(provider))}>
                           Copiar loja
                         </button>
+                        <button className="secondaryAction" onClick={() => shareProviderLinkOn(provider, 'facebook', 'store')}>
+                          Facebook
+                        </button>
+                        <button className="secondaryAction" onClick={() => shareProviderLinkOn(provider, 'telegram', 'store')}>
+                          Telegram
+                        </button>
+                        <button className="secondaryAction" onClick={() => generateStoreQrCode(provider)}>
+                          <QrCode size={16} /> Código QR
+                        </button>
                       </div>
+                      {storeQrCode && (
+                        <div className="qrCodeBox">
+                          <img src={storeQrCode} alt={`Código QR da loja ${provider.name}`} />
+                          <div>
+                            <strong>Imprima e deixe à vista</strong>
+                            <span>O cliente aponta a câmera do celular e cai direto na sua loja — funciona em cartão de visita, vitrine ou espelho.</span>
+                            <div className="shareActions">
+                              <a className="secondaryAction" href={storeQrCode} download={`qrcode-${provider.slug || provider.id}.png`}>
+                                Baixar imagem
+                              </a>
+                              <button type="button" onClick={() => setStoreQrCode('')}>Fechar</button>
+                            </div>
+                          </div>
+                        </div>
+                      )}
                     </div>
                   </>
                 )}
@@ -4276,7 +4640,7 @@ function App() {
                 {providerProfileTab === 'conversao' && (
                   <>
                     <div>
-                      <p className="eyebrow">Convencer o cliente</p>
+                      <p className="eyebrow">Marketing</p>
                       <h3>Textos e informações que ajudam a fechar o agendamento</h3>
                     </div>
                     <div className="inlineFields">
@@ -4315,203 +4679,214 @@ function App() {
                       </label>
                     </div>
 
-                    <div className="highlightEditor">
-                      <div>
-                        <p className="eyebrow">Selos de confiança</p>
-                        <h3>Credenciais rápidas</h3>
+                    <details
+                      className="collapsibleBlock"
+                      open={(inviteDraft.trustBadges || []).length > 0 || (inviteDraft.proofItems || []).length > 0 || (inviteDraft.testimonials || []).length > 0}
+                    >
+                      <summary>Prova social</summary>
+                      <div className="highlightEditor">
+                        <div>
+                          <p className="eyebrow">Selos de confiança</p>
+                          <h3>Credenciais rápidas</h3>
+                        </div>
+                        <div className="chips">
+                          {(inviteDraft.trustBadges || []).map((badge) => (
+                            <button key={badge} type="button" onClick={() => updateInviteDraft(provider.id, 'trustBadges', inviteDraft.trustBadges.filter((item) => item !== badge))}>
+                              {badge} <Trash2 size={14} />
+                            </button>
+                          ))}
+                        </div>
+                        <form
+                          className="inlineAdd"
+                          onSubmit={(event) => {
+                            event.preventDefault()
+                            const value = event.currentTarget.elements.badge.value.trim()
+                            if (!value) return
+                            updateInviteDraft(provider.id, 'trustBadges', [...(inviteDraft.trustBadges || []), value])
+                            event.currentTarget.reset()
+                          }}
+                        >
+                          <input name="badge" maxLength="40" placeholder="Ex.: Atendimento certificado" />
+                          <button type="submit">Adicionar</button>
+                        </form>
                       </div>
-                      <div className="chips">
-                        {(inviteDraft.trustBadges || []).map((badge) => (
-                          <button key={badge} type="button" onClick={() => updateInviteDraft(provider.id, 'trustBadges', inviteDraft.trustBadges.filter((item) => item !== badge))}>
-                            {badge} <Trash2 size={14} />
-                          </button>
-                        ))}
-                      </div>
-                      <form
-                        className="inlineAdd"
-                        onSubmit={(event) => {
-                          event.preventDefault()
-                          const value = event.currentTarget.elements.badge.value.trim()
-                          if (!value) return
-                          updateInviteDraft(provider.id, 'trustBadges', [...(inviteDraft.trustBadges || []), value])
-                          event.currentTarget.reset()
-                        }}
-                      >
-                        <input name="badge" maxLength="40" placeholder="Ex.: Atendimento certificado" />
-                        <button type="submit">Adicionar</button>
-                      </form>
-                    </div>
 
-                    <div className="highlightEditor">
-                      <div>
-                        <p className="eyebrow">Resultados</p>
-                        <h3>Resultados e depoimentos curtos</h3>
-                      </div>
-                      <label>Título da seção
-                        <input
-                          maxLength="80"
-                          placeholder="Ex.: Por que clientes escolhem nossa loja"
-                          value={inviteDraft.proofTitle || ''}
-                          onChange={(event) => updateInviteDraft(provider.id, 'proofTitle', event.target.value)}
-                        />
-                      </label>
-                      <div className="chips">
-                        {(inviteDraft.proofItems || []).map((proof) => (
-                          <button key={proof} type="button" onClick={() => updateInviteDraft(provider.id, 'proofItems', inviteDraft.proofItems.filter((item) => item !== proof))}>
-                            {proof} <Trash2 size={14} />
-                          </button>
-                        ))}
-                      </div>
-                      <form
-                        className="inlineAdd"
-                        onSubmit={(event) => {
-                          event.preventDefault()
-                          const value = event.currentTarget.elements.proof.value.trim()
-                          if (!value) return
-                          updateInviteDraft(provider.id, 'proofItems', [...(inviteDraft.proofItems || []), value])
-                          event.currentTarget.reset()
-                        }}
-                      >
-                        <input name="proof" maxLength="90" placeholder="Ex.: Mais de 200 atendimentos realizados" />
-                        <button type="submit">Adicionar</button>
-                      </form>
-                    </div>
-
-                    <div className="highlightEditor">
-                      <div>
-                        <p className="eyebrow">Depoimentos de clientes</p>
-                        <h3>O que seus clientes disseram sobre você</h3>
-                      </div>
-                      <div className="faqEditorList">
-                        {(inviteDraft.testimonials || []).map((item, index) => (
-                          <div className="faqEditorItem" key={`${item.name}-${index}`}>
-                            <input
-                              placeholder="Nome do cliente"
-                              value={item.name || ''}
-                              onChange={(event) => updateInviteDraft(provider.id, 'testimonials', (inviteDraft.testimonials || []).map((testimonial, testimonialIndex) => testimonialIndex === index ? { ...testimonial, name: event.target.value } : testimonial))}
-                            />
-                            <input
-                              placeholder="Link da foto do cliente (opcional)"
-                              value={item.photoUrl || ''}
-                              onChange={(event) => updateInviteDraft(provider.id, 'testimonials', (inviteDraft.testimonials || []).map((testimonial, testimonialIndex) => testimonialIndex === index ? { ...testimonial, photoUrl: event.target.value } : testimonial))}
-                            />
-                            <input
-                              max="5"
-                              min="1"
-                              placeholder="Nota (1 a 5)"
-                              type="number"
-                              value={item.rating || 5}
-                              onChange={(event) => updateInviteDraft(provider.id, 'testimonials', (inviteDraft.testimonials || []).map((testimonial, testimonialIndex) => testimonialIndex === index ? { ...testimonial, rating: Number(event.target.value) } : testimonial))}
-                            />
-                            <textarea
-                              placeholder="Depoimento"
-                              value={item.text || ''}
-                              onChange={(event) => updateInviteDraft(provider.id, 'testimonials', (inviteDraft.testimonials || []).map((testimonial, testimonialIndex) => testimonialIndex === index ? { ...testimonial, text: event.target.value } : testimonial))}
-                            />
-                            <button className="dangerButton" type="button" title="Remover depoimento" aria-label="Remover depoimento" onClick={() => updateInviteDraft(provider.id, 'testimonials', (inviteDraft.testimonials || []).filter((_, testimonialIndex) => testimonialIndex !== index))}><Trash2 size={16} /></button>
-                          </div>
-                        ))}
-                      </div>
-                      <button
-                        className="secondaryButton compactButton"
-                        type="button"
-                        onClick={() => updateInviteDraft(provider.id, 'testimonials', [...(inviteDraft.testimonials || []), { name: '', photoUrl: '', rating: 5, text: '' }])}
-                      >
-                        <Plus size={16} /> Adicionar depoimento
-                      </button>
-                    </div>
-
-                    <div className="highlightEditor">
-                      <div>
-                        <p className="eyebrow">Obrigado</p>
-                        <h3>Página após agendamento</h3>
-                      </div>
-                      <div className="inlineFields">
-                        <label>Título de confirmação
+                      <div className="highlightEditor">
+                        <div>
+                          <p className="eyebrow">Resultados</p>
+                          <h3>Resultados e depoimentos curtos</h3>
+                        </div>
+                        <label>Título da seção
                           <input
                             maxLength="80"
-                            value={inviteDraft.thankYouTitle || ''}
-                            onChange={(event) => updateInviteDraft(provider.id, 'thankYouTitle', event.target.value)}
+                            placeholder="Ex.: Por que clientes escolhem nossa loja"
+                            value={inviteDraft.proofTitle || ''}
+                            onChange={(event) => updateInviteDraft(provider.id, 'proofTitle', event.target.value)}
                           />
                         </label>
-                        <label>Mensagem de confirmação
-                          <input
-                            maxLength="180"
-                            value={inviteDraft.thankYouMessage || ''}
-                            onChange={(event) => updateInviteDraft(provider.id, 'thankYouMessage', event.target.value)}
-                          />
-                        </label>
+                        <div className="chips">
+                          {(inviteDraft.proofItems || []).map((proof) => (
+                            <button key={proof} type="button" onClick={() => updateInviteDraft(provider.id, 'proofItems', inviteDraft.proofItems.filter((item) => item !== proof))}>
+                              {proof} <Trash2 size={14} />
+                            </button>
+                          ))}
+                        </div>
+                        <form
+                          className="inlineAdd"
+                          onSubmit={(event) => {
+                            event.preventDefault()
+                            const value = event.currentTarget.elements.proof.value.trim()
+                            if (!value) return
+                            updateInviteDraft(provider.id, 'proofItems', [...(inviteDraft.proofItems || []), value])
+                            event.currentTarget.reset()
+                          }}
+                        >
+                          <input name="proof" maxLength="90" placeholder="Ex.: Mais de 200 atendimentos realizados" />
+                          <button type="submit">Adicionar</button>
+                        </form>
                       </div>
-                    </div>
 
-                    <div className="highlightEditor">
-                      <div>
-                        <p className="eyebrow">Rastreamento</p>
-                        <h3>Meta Pixel e Google Tag</h3>
+                      <div className="highlightEditor">
+                        <div>
+                          <p className="eyebrow">Depoimentos de clientes</p>
+                          <h3>O que seus clientes disseram sobre você</h3>
+                        </div>
+                        <div className="faqEditorList">
+                          {(inviteDraft.testimonials || []).map((item, index) => (
+                            <div className="faqEditorItem" key={`${item.name}-${index}`}>
+                              <input
+                                placeholder="Nome do cliente"
+                                value={item.name || ''}
+                                onChange={(event) => updateInviteDraft(provider.id, 'testimonials', (inviteDraft.testimonials || []).map((testimonial, testimonialIndex) => testimonialIndex === index ? { ...testimonial, name: event.target.value } : testimonial))}
+                              />
+                              <input
+                                placeholder="Link da foto do cliente (opcional)"
+                                value={item.photoUrl || ''}
+                                onChange={(event) => updateInviteDraft(provider.id, 'testimonials', (inviteDraft.testimonials || []).map((testimonial, testimonialIndex) => testimonialIndex === index ? { ...testimonial, photoUrl: event.target.value } : testimonial))}
+                              />
+                              <input
+                                max="5"
+                                min="1"
+                                placeholder="Nota (1 a 5)"
+                                type="number"
+                                value={item.rating || 5}
+                                onChange={(event) => updateInviteDraft(provider.id, 'testimonials', (inviteDraft.testimonials || []).map((testimonial, testimonialIndex) => testimonialIndex === index ? { ...testimonial, rating: Number(event.target.value) } : testimonial))}
+                              />
+                              <textarea
+                                placeholder="Depoimento"
+                                value={item.text || ''}
+                                onChange={(event) => updateInviteDraft(provider.id, 'testimonials', (inviteDraft.testimonials || []).map((testimonial, testimonialIndex) => testimonialIndex === index ? { ...testimonial, text: event.target.value } : testimonial))}
+                              />
+                              <button className="dangerButton" type="button" title="Remover depoimento" aria-label="Remover depoimento" onClick={() => updateInviteDraft(provider.id, 'testimonials', (inviteDraft.testimonials || []).filter((_, testimonialIndex) => testimonialIndex !== index))}><Trash2 size={16} /></button>
+                            </div>
+                          ))}
+                        </div>
+                        <button
+                          className="secondaryButton compactButton"
+                          type="button"
+                          onClick={() => updateInviteDraft(provider.id, 'testimonials', [...(inviteDraft.testimonials || []), { name: '', photoUrl: '', rating: 5, text: '' }])}
+                        >
+                          <Plus size={16} /> Adicionar depoimento
+                        </button>
                       </div>
-                      <div className="inlineFields">
-                        <label>Meta Pixel ID
-                          <input
-                            placeholder="Ex.: 1234567890"
-                            value={inviteDraft.metaPixelId || ''}
-                            onChange={(event) => updateInviteDraft(provider.id, 'metaPixelId', event.target.value)}
-                          />
-                        </label>
-                        <label>Google Tag ID
-                          <input
-                            placeholder="Ex.: G-XXXXXXXXXX ou AW-XXXXXXXXX"
-                            value={inviteDraft.googleTagId || ''}
-                            onChange={(event) => updateInviteDraft(provider.id, 'googleTagId', event.target.value)}
-                          />
-                        </label>
-                      </div>
-                    </div>
+                    </details>
 
-                    <div className="highlightEditor">
-                      <div>
-                        <p className="eyebrow">Politica e termos</p>
-                        <h3>Regras visiveis na landing</h3>
-                      </div>
-                      <label>Texto legal do prestador
-                        <textarea
-                          className="aboutField"
-                          placeholder="Informe regras de atendimento, cancelamento, uso de dados e canais de privacidade."
-                          value={inviteDraft.termsText || ''}
-                          onChange={(event) => updateInviteDraft(provider.id, 'termsText', event.target.value)}
-                        />
-                      </label>
-                    </div>
-
-                    <div className="highlightEditor">
-                      <div>
-                        <p className="eyebrow">FAQ</p>
-                        <h3>Perguntas frequentes</h3>
-                      </div>
-                      <div className="faqEditorList">
-                        {(inviteDraft.faqItems || []).map((item, index) => (
-                          <div className="faqEditorItem" key={`${item.question}-${index}`}>
+                    <details className="collapsibleBlock" open={Boolean(inviteDraft.thankYouTitle || inviteDraft.thankYouMessage)}>
+                      <summary>Pós-agendamento</summary>
+                      <div className="highlightEditor">
+                        <div>
+                          <p className="eyebrow">Obrigado</p>
+                          <h3>Página após agendamento</h3>
+                        </div>
+                        <div className="inlineFields">
+                          <label>Título de confirmação
                             <input
-                              placeholder="Pergunta"
-                              value={item.question || ''}
-                              onChange={(event) => updateInviteDraft(provider.id, 'faqItems', inviteDraft.faqItems.map((faq, faqIndex) => faqIndex === index ? { ...faq, question: event.target.value } : faq))}
+                              maxLength="80"
+                              value={inviteDraft.thankYouTitle || ''}
+                              onChange={(event) => updateInviteDraft(provider.id, 'thankYouTitle', event.target.value)}
                             />
-                            <textarea
-                              placeholder="Resposta curta"
-                              value={item.answer || ''}
-                              onChange={(event) => updateInviteDraft(provider.id, 'faqItems', inviteDraft.faqItems.map((faq, faqIndex) => faqIndex === index ? { ...faq, answer: event.target.value } : faq))}
+                          </label>
+                          <label>Mensagem de confirmação
+                            <input
+                              maxLength="180"
+                              value={inviteDraft.thankYouMessage || ''}
+                              onChange={(event) => updateInviteDraft(provider.id, 'thankYouMessage', event.target.value)}
                             />
-                            <button className="dangerButton" type="button" title="Remover pergunta" aria-label="Remover pergunta" onClick={() => updateInviteDraft(provider.id, 'faqItems', inviteDraft.faqItems.filter((_, faqIndex) => faqIndex !== index))}><Trash2 size={16} /></button>
-                          </div>
-                        ))}
+                          </label>
+                        </div>
                       </div>
-                      <button
-                        className="secondaryButton compactButton"
-                        type="button"
-                        onClick={() => updateInviteDraft(provider.id, 'faqItems', [...(inviteDraft.faqItems || []), { question: '', answer: '' }])}
-                      >
-                        <Plus size={16} /> Adicionar pergunta
-                      </button>
-                    </div>
+                    </details>
+
+                    <details className="collapsibleBlock" open={(inviteDraft.faqItems || []).length > 0}>
+                      <summary>FAQ</summary>
+                      <div className="highlightEditor">
+                        <div>
+                          <p className="eyebrow">FAQ</p>
+                          <h3>Perguntas frequentes</h3>
+                        </div>
+                        <div className="faqEditorList">
+                          {(inviteDraft.faqItems || []).map((item, index) => (
+                            <div className="faqEditorItem" key={`${item.question}-${index}`}>
+                              <input
+                                placeholder="Pergunta"
+                                value={item.question || ''}
+                                onChange={(event) => updateInviteDraft(provider.id, 'faqItems', inviteDraft.faqItems.map((faq, faqIndex) => faqIndex === index ? { ...faq, question: event.target.value } : faq))}
+                              />
+                              <textarea
+                                placeholder="Resposta curta"
+                                value={item.answer || ''}
+                                onChange={(event) => updateInviteDraft(provider.id, 'faqItems', inviteDraft.faqItems.map((faq, faqIndex) => faqIndex === index ? { ...faq, answer: event.target.value } : faq))}
+                              />
+                              <button className="dangerButton" type="button" title="Remover pergunta" aria-label="Remover pergunta" onClick={() => updateInviteDraft(provider.id, 'faqItems', inviteDraft.faqItems.filter((_, faqIndex) => faqIndex !== index))}><Trash2 size={16} /></button>
+                            </div>
+                          ))}
+                        </div>
+                        <button
+                          className="secondaryButton compactButton"
+                          type="button"
+                          onClick={() => updateInviteDraft(provider.id, 'faqItems', [...(inviteDraft.faqItems || []), { question: '', answer: '' }])}
+                        >
+                          <Plus size={16} /> Adicionar pergunta
+                        </button>
+                      </div>
+                    </details>
+
+                    <details className="collapsibleBlock" open={Boolean(inviteDraft.termsText)}>
+                      <summary>Política e termos</summary>
+                      <div className="highlightEditor">
+                        <label>Texto legal do prestador
+                          <textarea
+                            className="aboutField"
+                            placeholder="Informe regras de atendimento, cancelamento, uso de dados e canais de privacidade."
+                            value={inviteDraft.termsText || ''}
+                            onChange={(event) => updateInviteDraft(provider.id, 'termsText', event.target.value)}
+                          />
+                        </label>
+                      </div>
+                    </details>
+
+                    <details className="collapsibleBlock" open={Boolean(inviteDraft.metaPixelId || inviteDraft.googleTagId)}>
+                      <summary>Rastreamento de anúncios (avançado)</summary>
+                      <div className="highlightEditor">
+                        <p className="privacyHint">Use só se alguém que cuida dos seus anúncios pediu estes códigos. Se você não anuncia, pode deixar vazio.</p>
+                        <div className="inlineFields">
+                          <label>Código da Meta/Facebook
+                            <input
+                              placeholder="Cole o código informado pelo gestor de anúncios"
+                              value={inviteDraft.metaPixelId || ''}
+                              onChange={(event) => updateInviteDraft(provider.id, 'metaPixelId', event.target.value)}
+                            />
+                          </label>
+                          <label>Código do Google
+                            <input
+                              placeholder="Cole o código informado pelo gestor de anúncios"
+                              value={inviteDraft.googleTagId || ''}
+                              onChange={(event) => updateInviteDraft(provider.id, 'googleTagId', event.target.value)}
+                            />
+                          </label>
+                        </div>
+                      </div>
+                    </details>
                   </>
                 )}
 
@@ -4533,6 +4908,12 @@ function App() {
                             Compartilhar
                           </button>
                         )}
+                        <button className="secondaryAction" onClick={() => shareProviderLinkOn(provider, 'facebook')}>
+                          Facebook
+                        </button>
+                        <button className="secondaryAction" onClick={() => shareProviderLinkOn(provider, 'telegram')}>
+                          Telegram
+                        </button>
                         <button
                           className="secondaryAction"
                           onClick={() => navigator.clipboard.writeText(getInviteLink(provider))}
@@ -4580,13 +4961,9 @@ function App() {
                         onChange={(event) => updateInviteDraft(provider.id, 'firstOffer', event.target.value)}
                       />
                     </label>
-                    <label>Política e termos visíveis
-                      <textarea
-                        placeholder="Condições de atendimento, remarcação, cancelamento, privacidade e observações importantes para o cliente."
-                        value={inviteDraft.termsText || ''}
-                        onChange={(event) => updateInviteDraft(provider.id, 'termsText', event.target.value)}
-                      />
-                    </label>
+                    <p className="privacyHint">
+                      A política e termos visíveis pro cliente agora são editados em <strong>Marketing ? Política e termos</strong> — o texto é o mesmo em toda a loja, não precisa repetir aqui.
+                    </p>
                   </>
                 )}
 
@@ -4613,6 +4990,17 @@ function App() {
                           <label>Bio curta
                             <textarea value={resource.bio} onChange={(event) => updateProviderResource(resource.id, 'bio', event.target.value)} />
                           </label>
+                          {resource.photoUrl && <img className="resourceEditorPhoto" src={resource.photoUrl} alt="" />}
+                          <div className="serviceActions">
+                            <label className="photoUpload inlineUpload"><Image size={18} /> Foto do recurso
+                              <input accept="image/*" type="file" onChange={(event) => uploadProviderResourcePhoto(resource.id, event.target.files?.[0])} />
+                            </label>
+                            {resource.photoUrl && (
+                              <button type="button" className="secondaryAction" onClick={() => updateProviderResource(resource.id, 'photoUrl', '')}>
+                                Remover foto
+                              </button>
+                            )}
+                          </div>
                           <div className="serviceActions">
                             <button type="button" onClick={() => updateProviderResource(resource.id, 'active', !resource.active)}>{resource.active ? 'Pausar' : 'Ativar'}</button>
                             <button className="dangerButton" type="button" title="Remover" aria-label="Remover" onClick={() => removeProviderResource(resource.id)}><Trash2 size={16} /></button>
@@ -4636,6 +5024,7 @@ function App() {
                     savedNotice && <span>{savedNotice}</span>
                   )}
                 </div>
+              </div>
 
                 <div className={`landingPreview ${inviteDraft.theme?.publicAppearance || 'system'} previewTab-${providerProfileTab}`}>
                   <div className="landingPreviewHeader">
@@ -4817,6 +5206,16 @@ function App() {
 
               {providerTab === 'agenda' && (
                 <div className="providerSection">
+                  {clientsWithoutReturn > 0 && (
+                    <button
+                      type="button"
+                      className="unsavedBanner followUpBanner"
+                      onClick={() => { setProviderTab('clientes'); setClientFilter('Sem retorno') }}
+                    >
+                      <Clock3 size={16} />
+                      <span>{clientsWithoutReturn} {clientsWithoutReturn === 1 ? 'cliente está' : 'clientes estão'} sem retorno. Toque pra ver e recontatar.</span>
+                    </button>
+                  )}
                   <div className="sectionTools">
                     <div>
                       <h3>Agenda operacional</h3>
@@ -5071,6 +5470,7 @@ function App() {
                       providerServiceAnalytics={providerServiceAnalytics}
                       serviceViews={serviceViews}
                       setAnalyticsDays={setAnalyticsDays}
+                      sourceBreakdown={sourceBreakdown}
                       startConversion={startConversion}
                       uniqueVisitors={uniqueVisitors}
                     />
@@ -5242,7 +5642,7 @@ function App() {
                   </button>
                 )}
               </div>
-              <p className="privacyHint">Ícone compacto — usado no distintivo do sidebar/login e no favicon da aba do navegador.</p>
+              <p className="privacyHint">Ãcone compacto — usado no distintivo do sidebar/login e no favicon da aba do navegador.</p>
               <div className="logoUploader">
                 <div className="logoPreview">
                   {data.brand.logotypeUrl ? <img src={data.brand.logotypeUrl} alt="" /> : <CalendarCheck size={26} />}
@@ -5597,6 +5997,107 @@ function App() {
                 {data.privacyRequests.length === 0 && <span className="emptyText">Nenhuma solicitação registrada.</span>}
               </div>
             </div>}
+
+            {adminTab === 'contabilidade' && session.isMasterAdmin && (
+              <div className="panel adminSectionPanel">
+                <div className="panelHeader compact">
+                  <div><p className="eyebrow">Financeiro interno</p><h2>Contabilidade</h2></div>
+                  <Wallet size={22} />
+                </div>
+                <div className="profileTabs" role="tablist" aria-label="Seções de contabilidade">
+                  <button type="button" className={financeSubTab === 'resumo' ? 'active' : ''} onClick={() => setFinanceSubTab('resumo')}>Resumo</button>
+                  <button type="button" className={financeSubTab === 'lancamentos' ? 'active' : ''} onClick={() => setFinanceSubTab('lancamentos')}>Lançamentos</button>
+                </div>
+
+                {financeSubTab === 'resumo' && (
+                  <>
+                    <label className="compactSelect">Período
+                      <select value={financePeriod} onChange={(event) => setFinancePeriod(event.target.value)}>
+                        <option value="mes_atual">Mês atual</option>
+                        <option value="todos">Todos os lançamentos</option>
+                      </select>
+                    </label>
+                    <div className="metricGrid">
+                      <Stat label="Receita do período" value={currency(periodRevenue)} icon={<TrendingUp />} />
+                      <Stat label="Despesas do período" value={currency(periodExpenses)} icon={<AlertCircle />} />
+                      <Stat label="Margem" value={currency(periodMargin)} icon={<Wallet />} />
+                      <Stat label="Margem %" value={`${periodMarginPercent}%`} icon={<CheckCircle2 />} />
+                    </div>
+                    <div className="panel">
+                      <h3>Calculadora de CAC (tráfego pago)</h3>
+                      <p className="privacyHint">
+                        Soma as despesas lançadas na categoria "Tráfego pago" no período selecionado e divide pelo número de novos prestadores pagantes informado abaixo.
+                      </p>
+                      <label>Novos prestadores pagantes no período
+                        <input type="number" min="0" value={newPayingProviders} onChange={(event) => setNewPayingProviders(event.target.value)} />
+                      </label>
+                      <div className="parameterSummary">
+                        <span>Despesas em tráfego pago: {currency(paidTrafficExpenses)}</span>
+                        <span>CAC estimado: {estimatedCac === null ? '—' : currency(estimatedCac)}</span>
+                      </div>
+                    </div>
+                  </>
+                )}
+
+                {financeSubTab === 'lancamentos' && (
+                  <>
+                    <form className="nestedForm" onSubmit={(event) => { event.preventDefault(); createFinanceEntry() }}>
+                      <label>Tipo
+                        <select value={financeEntryForm.entryType} onChange={(event) => {
+                          const entryType = event.target.value
+                          setFinanceEntryForm({ ...financeEntryForm, entryType, category: FINANCE_CATEGORY_OPTIONS[entryType][0] })
+                        }}>
+                          <option value="receita">Receita</option>
+                          <option value="despesa">Despesa</option>
+                        </select>
+                      </label>
+                      <label>Categoria
+                        <select value={financeEntryForm.category} onChange={(event) => setFinanceEntryForm({ ...financeEntryForm, category: event.target.value })}>
+                          {FINANCE_CATEGORY_OPTIONS[financeEntryForm.entryType].map((option) => <option key={option} value={option}>{option}</option>)}
+                        </select>
+                      </label>
+                      <label>Descrição
+                        <input required value={financeEntryForm.description} onChange={(event) => setFinanceEntryForm({ ...financeEntryForm, description: event.target.value })} />
+                      </label>
+                      <label>Valor (R$)
+                        <input required type="number" min="0.01" step="0.01" value={financeEntryForm.amount} onChange={(event) => setFinanceEntryForm({ ...financeEntryForm, amount: event.target.value })} />
+                      </label>
+                      <label>Data
+                        <input required type="date" value={financeEntryForm.date} onChange={(event) => setFinanceEntryForm({ ...financeEntryForm, date: event.target.value })} />
+                      </label>
+                      <button type="submit">Adicionar lançamento</button>
+                    </form>
+
+                    <div className="requestList">
+                      {sortedFinanceEntries.map((entry) => (
+                        <article className="requestRow" key={entry.id}>
+                          <div>
+                            <select value={entry.entryType} onChange={(event) => {
+                              const entryType = event.target.value
+                              updateFinanceEntry(entry.id, 'entryType', entryType)
+                              updateFinanceEntry(entry.id, 'category', FINANCE_CATEGORY_OPTIONS[entryType][0])
+                            }}>
+                              <option value="receita">Receita</option>
+                              <option value="despesa">Despesa</option>
+                            </select>
+                            <select value={entry.category} onChange={(event) => updateFinanceEntry(entry.id, 'category', event.target.value)}>
+                              {FINANCE_CATEGORY_OPTIONS[entry.entryType].map((option) => <option key={option} value={option}>{option}</option>)}
+                            </select>
+                            <input value={entry.description} onChange={(event) => updateFinanceEntry(entry.id, 'description', event.target.value)} />
+                            <input type="number" min="0.01" step="0.01" value={entry.amount} onChange={(event) => updateFinanceEntry(entry.id, 'amount', Number(event.target.value))} />
+                            <input type="date" value={entry.date} onChange={(event) => updateFinanceEntry(entry.id, 'date', event.target.value)} />
+                          </div>
+                          <div className="shareActions">
+                            <button type="button" className="dangerButton" onClick={() => removeFinanceEntry(entry.id)}><Trash2 size={16} /></button>
+                          </div>
+                        </article>
+                      ))}
+                      {financeEntries.length === 0 && <span className="emptyState">Nenhum lançamento registrado.</span>}
+                    </div>
+                  </>
+                )}
+              </div>
+            )}
           </section>
         )}
       </section>

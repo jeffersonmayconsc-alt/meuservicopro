@@ -1,4 +1,4 @@
--- ============================================================
+?-- ============================================================
 -- Meu Servico Online - dados de demonstracao
 -- Rode depois de schema.sql. Replica o initialState que o app
 -- usava no localStorage, pra qualquer link ja testado continuar
@@ -16,39 +16,38 @@ values
 on conflict (id) do nothing;
 
 insert into public.providers
-  (id, name, owner, category, city, service, invite_title, invite_message, first_offer,
-   logo_url, theme, duration, price, highlights, active, approval_status, capacity, slug)
+  (id, name, owner, category, city, invite_title, invite_message, first_offer,`r`n   logo_url, theme, highlights, active, approval_status, capacity, slug)
 values
-  ('p1', 'Clinica Vida Plena', 'Dra. Marina Lopes', 'Saude', 'Sao Paulo', 'Consulta inicial',
+  ('p1', 'Clínica Vida Plena', 'Dra. Marina Lopes', 'Saúde', 'São Paulo,
    'Bem-vindo ao seu primeiro atendimento',
    'Agende sua consulta com tranquilidade. Vou entender sua necessidade e indicar o melhor caminho para o seu cuidado.',
-   'Primeira consulta com avaliacao completa e plano inicial.',
+   'Primeira consulta com avaliação completa e plano inicial.',
    '', '{"accent":"#2563eb","background":"#111827","style":"profissional"}'::jsonb,
-   50, 180, array['Atendimento humanizado', 'Plano inicial personalizado'], true, 'aprovado', 8, 'clinica-vida-plena-p1'),
-  ('p2', 'Estudio Corpo Livre', 'Renato Alves', 'Bem-estar', 'Curitiba', 'Avaliacao e plano',
-   'Comece seu plano com uma avaliacao',
-   'Escolha o melhor horario para conversarmos sobre seus objetivos e montar uma rotina possivel para voce.',
-   'Avaliacao inicial com plano personalizado.',
+   array['Atendimento humanizado', 'Plano inicial personalizado'], true, 'aprovado', 8, 'clinica-vida-plena-p1'),
+  ('p2', 'Estúdio Corpo Livre', 'Renato Alves', 'Bem-estar', 'Curitiba,
+   'Comece seu plano com uma avaliação',
+   'Escolha o melhor horário para conversarmos sobre seus objetivos e montar uma rotina possível para você.',
+   'Avaliação inicial com plano personalizado.',
    '', '{"accent":"#0f766e","background":"#10231f","style":"acolhedor"}'::jsonb,
-   60, 120, array['Treinos adaptados', 'Acompanhamento individual'], true, 'aprovado', 6, 'estudio-corpo-livre-p2'),
-  ('p3', 'Consultoria Norte', 'Bianca Reis', 'Consultoria', 'Belo Horizonte', 'Sessao estrategica',
+   array['Treinos adaptados', 'Acompanhamento individual'], true, 'aprovado', 6, 'estudio-corpo-livre-p2'),
+  ('p3', 'Consultoria Norte', 'Bianca Reis', 'Consultoria', 'Belo Horizonte,
    'Vamos organizar sua proxima decisao',
-   'Reserve uma sessao para mapear cenario, prioridades e proximos passos com clareza.',
-   'Primeira sessao estrategica com diagnostico.',
+   'Reserve uma sessão para mapear cenário, prioridades e próximos passos com clareza.',
+   'Primeira sessão estratégica com diagnóstico.',
    '', '{"accent":"#7c3aed","background":"#1f1b2e","style":"premium"}'::jsonb,
-   45, 250, array['Diagnostico objetivo', 'Plano de acao claro'], false, 'pausado', 4, 'consultoria-norte-p3')
+   array['Diagnostico objetivo', 'Plano de acao claro'], false, 'pausado', 4, 'consultoria-norte-p3')
 on conflict (id) do nothing;
 
 insert into public.provider_services
   (id, provider_id, name, description, price, price_mode, duration, active, position)
 values
-  ('ps-p1-1', 'p1', 'Consulta inicial', 'Primeira consulta com avaliacao completa e plano inicial.', 180, 'fixo', 50, true, 0),
-  ('ps-p1-2', 'p1', 'Retorno terapeutico', 'Sessao de acompanhamento para revisar evolucao, ajustes e proximos passos.', 140, 'fixo', 40, true, 1),
-  ('ps-p1-3', 'p1', 'Orientacao familiar', 'Conversa orientativa para familiares, com encaminhamentos combinados apos a avaliacao.', 0, 'sob_consulta', null, true, 2),
-  ('ps-p2-1', 'p2', 'Avaliacao e plano', 'Avaliacao inicial com plano personalizado.', 120, 'fixo', 60, true, 0),
-  ('ps-p2-2', 'p2', 'Sessao avulsa', 'Treino acompanhado com foco no objetivo combinado para o dia.', 70, 'fixo', 50, true, 1),
+  ('ps-p1-1', 'p1', 'Consulta inicial', 'Primeira consulta com avaliação completa e plano inicial.', 180, 'fixo', 50, true, 0),
+  ('ps-p1-2', 'p1', 'Retorno terapêutico', 'Sessão de acompanhamento para revisar evolução, ajustes e próximos passos.', 140, 'fixo', 40, true, 1),
+  ('ps-p1-3', 'p1', 'Orientação familiar', 'Conversa orientativa para familiares, com encaminhamentos combinados após a avaliação.', 0, 'sob_consulta', null, true, 2),
+  ('ps-p2-1', 'p2', 'Avaliação e plano', 'Avaliação inicial com plano personalizado.', 120, 'fixo', 60, true, 0),
+  ('ps-p2-2', 'p2', 'Sessão avulsa', 'Treino acompanhado com foco no objetivo combinado para o dia.', 70, 'fixo', 50, true, 1),
   ('ps-p2-3', 'p2', 'Pacote mensal 8x', 'Plano recorrente com oito sessoes mensais e ajuste de rotina.', 480, 'fixo', null, true, 2),
-  ('ps-p3-1', 'p3', 'Sessao estrategica', 'Primeira sessao estrategica com diagnostico.', 250, 'fixo', 45, true, 0),
+  ('ps-p3-1', 'p3', 'Sessão estratégica', 'Primeira sessão estratégica com diagnóstico.', 250, 'fixo', 45, true, 0),
   ('ps-p3-2', 'p3', 'Projeto sob medida', 'Diagnostico e proposta para projetos com escopo aberto.', 0, 'sob_consulta', null, true, 1)
 on conflict (id) do nothing;
 
@@ -56,8 +55,8 @@ on conflict (id) do nothing;
 -- p2 e p3 seguem sem nenhum recurso cadastrado, ou seja, funcionam como
 -- sempre funcionaram — 1 agenda só, sem exigir escolha de recurso.
 insert into public.provider_resources (id, provider_id, name, bio, active, position) values
-  ('pr-p1-1', 'p1', 'Dra. Marina Lopes', 'Psicologa clinica, foco em ansiedade e transicoes de vida.', true, 0),
-  ('pr-p1-2', 'p1', 'Dr. Felipe Nogueira', 'Psicologo clinico, foco em relacionamentos e terapia de casal.', true, 1)
+  ('pr-p1-1', 'p1', 'Dra. Marina Lopes', 'Psicóloga clínica, foco em ansiedade e transições de vida.', true, 0),
+  ('pr-p1-2', 'p1', 'Dr. Felipe Nogueira', 'Psicólogo clínico, foco em relacionamentos e terapia de casal.', true, 1)
 on conflict (id) do nothing;
 
 insert into public.clients (id, name, contact, consent, created_at) values

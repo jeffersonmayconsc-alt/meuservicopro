@@ -1,0 +1,11 @@
+User-agent: *
+Allow: /
+Allow: /loja/
+Allow: /agendar/
+
+# Links de convite são pessoais (token único por cliente/prestador) — não indexar.
+Disallow: /cliente/
+Disallow: /prestador/
+Disallow: /representante/
+
+Sitemap: https://meuservicopro.vercel.app/sitemap.xml

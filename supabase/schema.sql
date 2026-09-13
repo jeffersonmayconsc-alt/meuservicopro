@@ -70,8 +70,6 @@ create table public.providers (
   category text not null,
   city text not null,
   about text not null default '',
-  -- Campos legados mantidos temporariamente para compatibilidade com o App.jsx atual.
-  service text not null,
   invite_title text not null default '',
   invite_message text not null default '',
   first_offer text not null default '',
@@ -98,8 +96,6 @@ create table public.providers (
   landing_status text not null default 'publicado' check (landing_status in ('rascunho', 'publicado')),
   logo_url text not null default '',
   theme jsonb not null default '{"accent":"#2563eb","background":"#111827","style":"profissional"}'::jsonb,
-  duration integer not null default 50,
-  price numeric(10,2) not null default 0,
   highlights text[] not null default '{}',
   active boolean not null default true,
   approval_status text not null default 'analise' check (approval_status in ('analise', 'aprovado', 'pausado')),
@@ -170,6 +166,20 @@ create table public.bookings (
 create index bookings_provider_id_idx on public.bookings (provider_id);
 create index bookings_provider_date_idx on public.bookings (provider_id, date);
 create index bookings_resource_id_idx on public.bookings (resource_id);
+
+create table public.booking_reviews (
+  id text primary key,
+  provider_id text not null references public.providers (id) on delete cascade,
+  booking_id text references public.bookings (id) on delete set null,
+  client_name text not null,
+  contact text not null,
+  rating integer not null check (rating between 1 and 5),
+  comment text not null default '',
+  status text not null default 'pendente' check (status in ('pendente', 'aprovado', 'rejeitado')),
+  created_at timestamptz not null default now()
+);
+create index booking_reviews_provider_id_idx on public.booking_reviews (provider_id);
+create index booking_reviews_status_idx on public.booking_reviews (status);
 
 create table public.clients (
   id text primary key,
@@ -301,6 +311,20 @@ create table public.platform_announcements (
 );
 create index platform_announcements_active_idx on public.platform_announcements (active);
 
+-- Ledger manual de receita/despesa da própria operação da plataforma (não é
+-- billing real, é controle interno de margem/CAC). Só o admin master enxerga.
+create table public.finance_entries (
+  id uuid primary key default gen_random_uuid(),
+  entry_type text not null check (entry_type in ('receita', 'despesa')),
+  category text not null default '',
+  description text not null default '',
+  amount numeric(10,2) not null check (amount > 0),
+  date date not null default current_date,
+  created_at timestamptz not null default now()
+);
+create index finance_entries_date_idx on public.finance_entries (date desc);
+create index finance_entries_entry_type_idx on public.finance_entries (entry_type);
+
 alter table public.providers add column representative_user_id uuid
   references public.platform_representatives (user_id) on delete set null;
 alter table public.provider_invites
@@ -320,6 +344,7 @@ alter table public.provider_resources enable row level security;
 alter table public.provider_services enable row level security;
 alter table public.portfolio_photos enable row level security;
 alter table public.bookings enable row level security;
+alter table public.booking_reviews enable row level security;
 alter table public.clients enable row level security;
 alter table public.provider_clients enable row level security;
 alter table public.blocked_slots enable row level security;
@@ -327,6 +352,11 @@ alter table public.privacy_requests enable row level security;
 alter table public.provider_invites enable row level security;
 alter table public.client_invites enable row level security;
 alter table public.analytics_events enable row level security;
+alter table public.platform_representatives enable row level security;
+alter table public.representative_invites enable row level security;
+alter table public.provider_accounts enable row level security;
+alter table public.client_accounts enable row level security;
+alter table public.finance_entries enable row level security;
 
 create or replace function public.is_master_admin()
 returns boolean
@@ -345,10 +375,70 @@ as $$
   );
 $$;
 
+create or replace function public.is_active_representative()
+returns boolean
+language sql stable security definer set search_path = public
+as $$
+  select exists (
+    select 1 from public.platform_representatives
+    where user_id = auth.uid() and status = 'ativo'
+  );
+$$;
+
+create or replace function public.get_my_platform_role()
+returns text
+language sql stable security definer set search_path = public
+as $$
+  select case
+    when public.is_master_admin() then 'admin'
+    when public.is_active_representative() then 'representante'
+    else null
+  end;
+$$;
+
+create or replace function public.representative_manages_provider(target_provider_id text)
+returns boolean
+language sql stable security definer set search_path = public
+as $$
+  select exists (
+    select 1
+    from public.providers p
+    join public.platform_representatives r
+      on r.user_id = p.representative_user_id
+    where p.id = target_provider_id
+      and r.user_id = auth.uid()
+      and r.status = 'ativo'
+  );
+$$;
+
+create or replace function public.provider_account_owns(target_provider_id text)
+returns boolean
+language sql stable security definer set search_path = public
+as $$
+  select exists (
+    select 1 from public.provider_accounts
+    where provider_id = target_provider_id and user_id = auth.uid()
+  );
+$$;
+
+create or replace function public.can_manage_provider(target_provider_id text)
+returns boolean
+language sql stable security definer set search_path = public
+as $$
+  select public.is_master_admin()
+    or public.representative_manages_provider(target_provider_id)
+    or public.provider_account_owns(target_provider_id)
+    or public.owns_provider(target_provider_id);
+$$;
+
 revoke all on function public.is_master_admin() from public, anon;
 grant execute on function public.is_master_admin() to authenticated;
 revoke all on function public.owns_provider(text) from public, anon;
 grant execute on function public.owns_provider(text) to authenticated;
+revoke all on function public.is_active_representative() from public, anon;
+grant execute on function public.is_active_representative() to authenticated;
+grant execute on function public.get_my_platform_role() to authenticated;
+grant execute on function public.can_manage_provider(text) to authenticated;
 
 create or replace function public.admin_link_provider_owner(target_provider_id text, owner_email text)
 returns void
@@ -379,74 +469,94 @@ create policy "authenticated_scoped_access" on public.platform_settings for all 
   using (public.is_master_admin()) with check (public.is_master_admin());
 
 create policy "anon_full_access" on public.providers for all to anon using (true) with check (true);
-create policy "authenticated_scoped_access" on public.providers for all to authenticated
-  using (public.is_master_admin() or owner_user_id = auth.uid())
-  with check (public.is_master_admin() or owner_user_id = auth.uid());
+create policy "authenticated_hierarchy_access" on public.providers for all to authenticated
+  using (public.can_manage_provider(id))
+  with check (public.can_manage_provider(id));
 
 create policy "anon_full_access" on public.provider_resources for all to anon using (true) with check (true);
-create policy "authenticated_scoped_access" on public.provider_resources for all to authenticated
-  using (public.is_master_admin() or public.owns_provider(provider_id))
-  with check (public.is_master_admin() or public.owns_provider(provider_id));
+create policy "authenticated_hierarchy_access" on public.provider_resources for all to authenticated
+  using (public.can_manage_provider(provider_id))
+  with check (public.can_manage_provider(provider_id));
 
 create policy "anon_full_access" on public.provider_services for all to anon using (true) with check (true);
-create policy "authenticated_scoped_access" on public.provider_services for all to authenticated
-  using (public.is_master_admin() or public.owns_provider(provider_id))
-  with check (public.is_master_admin() or public.owns_provider(provider_id));
+create policy "authenticated_hierarchy_access" on public.provider_services for all to authenticated
+  using (public.can_manage_provider(provider_id))
+  with check (public.can_manage_provider(provider_id));
 
 create policy "anon_full_access" on public.portfolio_photos for all to anon using (true) with check (true);
-create policy "authenticated_scoped_access" on public.portfolio_photos for all to authenticated
-  using (public.is_master_admin() or public.owns_provider(provider_id))
-  with check (public.is_master_admin() or public.owns_provider(provider_id));
+create policy "authenticated_hierarchy_access" on public.portfolio_photos for all to authenticated
+  using (public.can_manage_provider(provider_id))
+  with check (public.can_manage_provider(provider_id));
 
 create policy "anon_full_access" on public.bookings for all to anon using (true) with check (true);
-create policy "authenticated_scoped_access" on public.bookings for all to authenticated
-  using (public.is_master_admin() or public.owns_provider(provider_id))
-  with check (public.is_master_admin() or public.owns_provider(provider_id));
+create policy "authenticated_hierarchy_access" on public.bookings for all to authenticated
+  using (public.can_manage_provider(provider_id))
+  with check (public.can_manage_provider(provider_id));
+
+create policy "anon_insert_reviews" on public.booking_reviews for insert to anon with check (true);
+create policy "anon_read_approved_reviews" on public.booking_reviews for select to anon using (status = 'aprovado');
+create policy "authenticated_hierarchy_access" on public.booking_reviews for all to authenticated
+  using (public.can_manage_provider(provider_id))
+  with check (public.can_manage_provider(provider_id));
 
 create policy "anon_full_access" on public.blocked_slots for all to anon using (true) with check (true);
-create policy "authenticated_scoped_access" on public.blocked_slots for all to authenticated
-  using (public.is_master_admin() or public.owns_provider(provider_id))
-  with check (public.is_master_admin() or public.owns_provider(provider_id));
+create policy "authenticated_hierarchy_access" on public.blocked_slots for all to authenticated
+  using (public.can_manage_provider(provider_id))
+  with check (public.can_manage_provider(provider_id));
 
 create policy "anon_full_access" on public.provider_clients for all to anon using (true) with check (true);
-create policy "authenticated_scoped_access" on public.provider_clients for all to authenticated
-  using (public.is_master_admin() or public.owns_provider(provider_id))
-  with check (public.is_master_admin() or public.owns_provider(provider_id));
+create policy "authenticated_hierarchy_access" on public.provider_clients for all to authenticated
+  using (public.can_manage_provider(provider_id))
+  with check (public.can_manage_provider(provider_id));
 
 create policy "anon_full_access" on public.clients for all to anon using (true) with check (true);
 create policy "authenticated_scoped_access" on public.clients for all to authenticated
   using (
     public.is_master_admin()
-    or exists (select 1 from public.provider_clients pc where pc.client_id = clients.id and public.owns_provider(pc.provider_id))
+    or exists (select 1 from public.provider_clients pc where pc.client_id = clients.id and public.can_manage_provider(pc.provider_id))
   )
   with check (
     public.is_master_admin()
-    or exists (select 1 from public.provider_clients pc where pc.client_id = clients.id and public.owns_provider(pc.provider_id))
+    or exists (select 1 from public.provider_clients pc where pc.client_id = clients.id and public.can_manage_provider(pc.provider_id))
   );
 
 create policy "anon_full_access" on public.privacy_requests for all to anon using (true) with check (true);
-create policy "authenticated_scoped_access" on public.privacy_requests for all to authenticated
-  using (public.is_master_admin() or (provider_id is not null and public.owns_provider(provider_id)))
-  with check (public.is_master_admin() or (provider_id is not null and public.owns_provider(provider_id)));
+create policy "authenticated_hierarchy_access" on public.privacy_requests for all to authenticated
+  using (public.is_master_admin() or (provider_id is not null and public.can_manage_provider(provider_id)))
+  with check (public.is_master_admin() or (provider_id is not null and public.can_manage_provider(provider_id)));
 
 create policy "anon_full_access" on public.provider_invites for all to anon using (true) with check (true);
-create policy "authenticated_scoped_access" on public.provider_invites for all to authenticated
-  using (public.is_master_admin()) with check (public.is_master_admin());
+create policy "authenticated_hierarchy_access" on public.provider_invites for select to authenticated
+  using (public.is_master_admin() or representative_user_id = auth.uid());
 
 create policy "anon_full_access" on public.client_invites for all to anon using (true) with check (true);
-create policy "authenticated_scoped_access" on public.client_invites for all to authenticated
-  using (public.is_master_admin() or public.owns_provider(provider_id))
-  with check (public.is_master_admin() or public.owns_provider(provider_id));
+create policy "authenticated_hierarchy_access" on public.client_invites for all to authenticated
+  using (public.can_manage_provider(provider_id))
+  with check (public.can_manage_provider(provider_id));
 
 create policy "anon_full_access" on public.analytics_events for all to anon using (true) with check (true);
-create policy "authenticated_scoped_access" on public.analytics_events for all to authenticated
-  using (public.is_master_admin() or public.owns_provider(provider_id))
-  with check (public.is_master_admin() or public.owns_provider(provider_id));
+create policy "authenticated_hierarchy_access" on public.analytics_events for all to authenticated
+  using (public.can_manage_provider(provider_id))
+  with check (public.can_manage_provider(provider_id));
+
+create policy "master_manage_representatives" on public.platform_representatives for all to authenticated
+  using (public.is_master_admin()) with check (public.is_master_admin());
+create policy "representative_read_self" on public.platform_representatives for select to authenticated
+  using (user_id = auth.uid());
+create policy "master_manage_representative_invites" on public.representative_invites for all to authenticated
+  using (public.is_master_admin()) with check (public.is_master_admin());
+create policy "provider_account_scope" on public.provider_accounts for select to authenticated
+  using (user_id = auth.uid() or public.is_master_admin() or public.representative_manages_provider(provider_id));
+create policy "client_account_self" on public.client_accounts for select to authenticated
+  using (user_id = auth.uid() or public.is_master_admin());
 
 alter table public.platform_announcements enable row level security;
 create policy "authenticated_read_active_announcements" on public.platform_announcements for select to authenticated
   using (active or public.is_master_admin());
 create policy "master_manage_announcements" on public.platform_announcements for all to authenticated
+  using (public.is_master_admin()) with check (public.is_master_admin());
+
+create policy "master_manage_finance_entries" on public.finance_entries for all to authenticated
   using (public.is_master_admin()) with check (public.is_master_admin());
 
 grant usage on schema public to anon, authenticated;

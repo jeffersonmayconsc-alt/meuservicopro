@@ -12,6 +12,11 @@ dist
 dist-ssr
 *.local
 
+# Saida de teste e artefato gerado no build
+test-results
+playwright-report
+public/sitemap.xml
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json

@@ -3,7 +3,21 @@ import { Stat } from '../../components/Stat'
 
 const percentage = (value) => value.toFixed(1).replace('.', ',')
 
-export function StorePerformance({ analyticsDays, bookingStarts, funnelConversion, generatedBookings, providerServiceAnalytics, serviceViews, setAnalyticsDays, startConversion, uniqueVisitors }) {
+const sourceLabels = {
+  direto: 'Direto',
+  direct: 'Direto',
+  instagram: 'Instagram',
+  facebook: 'Facebook',
+  google: 'Google',
+  whatsapp: 'WhatsApp',
+  telegram: 'Telegram',
+}
+
+function sourceLabel(source) {
+  return sourceLabels[source?.toLowerCase()] || source || 'Direto'
+}
+
+export function StorePerformance({ analyticsDays, bookingStarts, funnelConversion, generatedBookings, providerServiceAnalytics, serviceViews, setAnalyticsDays, sourceBreakdown, startConversion, uniqueVisitors }) {
   return (
     <div className="providerSection analyticsSection">
       <div className="sectionTools analyticsHeader">
@@ -36,6 +50,18 @@ export function StorePerformance({ analyticsDays, bookingStarts, funnelConversio
           <div><span>Concluíram o pedido</span><div><i style={{ width: `${serviceViews ? Math.min(100, (generatedBookings / serviceViews) * 100) : 0}%` }} /></div><strong>{generatedBookings}</strong></div>
         </div>
         <p className="funnelHint">{bookingStarts ? `${percentage(startConversion)}% de quem iniciou chegou ao fim.` : 'Os dados aparecerão conforme os clientes usarem seu link.'}</p>
+      </div>
+      <div className="sourcePerformance">
+        <div><h3>De onde vêm seus visitantes</h3><span className="sectionSub">Visualizações por canal de origem.</span></div>
+        <div className="sourceRows">
+          {sourceBreakdown.map((item) => (
+            <div key={item.source}>
+              <span>{sourceLabel(item.source)}</span>
+              <strong>{item.views}</strong>
+            </div>
+          ))}
+          {sourceBreakdown.length === 0 && <span className="emptyState">Nenhuma origem registrada no período.</span>}
+        </div>
       </div>
       <div className="servicePerformance">
         <div><h3>Desempenho por serviço</h3><span className="sectionSub">Compare interesse e conversão da sua oferta.</span></div>

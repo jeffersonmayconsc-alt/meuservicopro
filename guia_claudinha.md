@@ -232,6 +232,21 @@ Precisa de `.env.local` preenchido com `VITE_SUPABASE_URL`/`VITE_SUPABASE_ANON_K
 3. Frontend: projeto Vercel "meuservicopro" já linkado (`.vercel/project.json`). `npx vercel@latest --prod --yes` reconstrói e promove pra produção — é o caminho confirmado que funciona (às vezes a primeira tentativa falha com "Not authorized" por instabilidade passageira da Vercel; rodar de novo resolve).
 4. Depois de publicar, verificar com `curl` ou Playwright contra `https://meuservicopro.vercel.app/` (checar hash do bundle `assets/index-*.js` mudou, e/ou tirar screenshot) — não assumir que o deploy funcionou só porque o comando não deu erro.
 
+**7.2 Critérios mínimos para uso em produção real**
+
+O projeto só deve receber dados reais quando estes pontos estiverem concluídos e validados:
+
+- Autenticação real ativada.
+- E-mails verificados e recuperação de senha funcionando.
+- Papéis persistidos no banco e não inferidos apenas por e-mail.
+- RLS restritiva validada para todos os perfis.
+- Convites com validade, uso único e revogação.
+- Logs e auditoria das ações sensíveis.
+- Política de privacidade e termos publicados.
+- Rotina de backup e recuperação validada.
+- Testes dos fluxos críticos aprovados.
+- Variáveis de produção configuradas sem exposição de segredos.
+
 ---
 
 ## 8. Convenções de código observadas
@@ -280,39 +295,7 @@ Não tem mais `.tabs` (removida, ver §5.2/§5.3). Seguir o padrão atual: valor
 
 ## 11. Pendências / Roadmap
 
-**11.1 Avaliação contra a proposta (2026-08-29)** — a proposta do Jefferson pro projeto tem 3 pilares: (1) prestador conseguir falar do trabalho dele nas redes sociais/anúncio, (2) alcançar clientes, (3) ter gestão de agendamento. Avaliação do que existe hoje em cada um:
-
-**(1) Divulgação em redes sociais / anúncio — o mais fraco dos três:**
-- ✅ Existe: vitrine pública personalizável (tema/cores/estilo, "sobre", destaques/chips, portfólio de fotos), links compartilháveis (loja, convite de cliente, por recurso), `shareProviderLink()` usa a Web Share API nativa do celular (`navigator.share` — no Android/iOS isso já abre o seletor do sistema com Instagram/WhatsApp/etc.; no desktop cai pro `wa.me` só), rastreamento de origem já capturado (`getTrafficSource()` lê `utm_source` da URL ou o referrer, salvo em `analytics_events.source`).
-- ❌ **Falta**: o dado de origem (`source`) é capturado mas **não aparece em nenhuma tela** — `StorePerformance`/"Desempenho da loja" mostra funil e desempenho por serviço, mas não quebra por canal/origem, então hoje o prestador não descobre pelo próprio app se o cliente veio do Instagram, de um anúncio ou de busca direta. Não existe gerador de post/imagem pronta pra divulgação, nem botões dedicados por rede social no desktop (só o share nativo + WhatsApp). Não existe (nem faz sentido nesta fase) integração com Meta/Google Ads de verdade — isso seria outro projeto.
-
-**(2) Alcançar clientes:**
-- ✅ Existe: busca geral por nome/categoria/cidade (multi-prestador), convite de cliente individual (link único via `client_invites`), recontato por WhatsApp pra cliente sem retorno, reconhecimento de cliente recorrente (localStorage por prestador, pré-preenche e pula consentimento repetido), consentimento LGPD por vínculo.
-- ❌ **Falta**: sem diretório/marketplace navegável por categoria (só busca textual simples), sem SEO (SPA com rotas por `#hash`, motor de busca não indexa bem `#agendar=slug`), sem avaliação/nota de cliente (review) que ajudaria conversão de visitante novo que nunca ouviu falar do prestador.
-
-**(3) Gestão de agendamento — o mais maduro dos três:**
-- ✅ Bem coberto: agenda operacional com bloqueio de horário, múltiplos recursos/profissionais por loja (opcional), catálogo de serviços, carrinho de interesse, gestão de clientes com alerta de retorno, hierarquia admin/representante/prestador com RLS real, governança LGPD, papel e autenticação reais.
-- ❌ Falta (itens menores, já conhecidos): notificação automática por WhatsApp/e-mail quando o status muda (hoje é manual, o prestador clica "Recontatar"), foto/portfólio por recurso individual, cliente ainda sem conta própria (só nome+contato, sem login — impede RLS do lado do cliente).
-
-**11.2 Lista priorizada de pendências** (ordem sugerida dentro de cada nível — não é regra fixa, é ponto de partida pra próxima sessão não ter que redescobrir isso):
-
-**Prioridade Alta (baixo esforço, resolve lacuna visível do pilar mais fraco):**
-1. **Mostrar origem/canal no "Desempenho da loja"** — o dado já existe (`analytics_events.source`, gravado por `getTrafficSource()` em `App.jsx:383`), só falta agregar e exibir. O quê fazer: em `App.jsx`, onde as métricas de `StorePerformance` já são calculadas (perto de `providerServiceAnalytics`/`serviceViews`/`bookingStarts`), agrupar `data.analyticsEvents` por `source` (contar `visualizou_servico` por grupo, achar o mais frequente) e passar como prop nova (`sourceBreakdown` ou parecido) pro componente `src/modules/provider/StorePerformance.jsx`; lá, adicionar um bloco tipo "De onde vêm seus visitantes" com uma lista simples `nome do canal → contagem`. Não precisa de schema novo.
-
-**Prioridade Média:**
-2. **Botões de compartilhamento por rede social no desktop** — hoje só existe `shareProviderLink()` (`App.jsx:1985`, Web Share API + fallback `wa.me`), que no desktop não abre nada além do WhatsApp. Adicionar link direto pro Facebook (`https://www.facebook.com/sharer/sharer.php?u=<link>`) e Telegram (`https://t.me/share/url?url=<link>&text=<texto>`) — funcionam sem SDK, é só abrir a URL. Instagram não tem esse tipo de link de compartilhamento web (só apps nativos), então fica de fora por limitação da própria plataforma, não do projeto. Onde: perto do "Link da loja"/"Link de convite" em "Minha loja" (`App.jsx`, dentro do `providerTab === 'loja'`).
-3. **Diretório navegável por categoria** — hoje a busca geral (`filteredServices`, tela "Escolha um serviço" sem `publicProviderId`) só filtra por texto livre. Adicionar um filtro por categoria (chips ou `<select>` com as categorias distintas de `activeProviders`) ao lado do campo de busca já existente. Não precisa de schema novo, `providers.category` já existe.
-4. **Notificação automática por WhatsApp/e-mail quando o status do agendamento muda** — hoje é manual (prestador clica "Recontatar"). Isso depende de decidir/contratar um provedor (WhatsApp Business API tem custo e homologação; e-mail transacional tipo Resend/SendGrid é mais simples de começar) — **decisão de negócio antes de codar**, não é só um ajuste de tela.
-
-**Prioridade Baixa (escopo maior, ou depende de decisão externa):**
-5. **Avaliação/nota de cliente (review)** — ajudaria conversão de visitante novo que não conhece o prestador. Schema novo (tabela de reviews vinculada a `bookings` concluídos), moderação (quem aprova?), exibição pública na vitrine — feature nova, não é extensão pequena.
-6. **SEO** — SPA com rotas por `#hash` não indexa bem em motor de busca. Resolver de verdade exige SSR/prerendering, ou seja, trocar Vite puro por algo como Next/Remix ou adicionar prerendering — **mudança de arquitetura**, não é ajuste pontual. Só faz sentido priorizar se aquisição orgânica via busca virar canal relevante.
-7. **Foto/portfólio por recurso individual** — `provider_resources.photo_url` já existe na coluna (schema pronto), só falta UI de upload — mesmo padrão de `uploadProviderLogo`/`uploadBrandLogo`, aplicar em `updateProviderResource`.
-8. **Cliente com conta própria** — `client_accounts` já existe no schema (criada pela outra sessão, migração de hierarquia), mas não tem fluxo de login/signup de cliente nem UI — mudaria o fluxo de agendamento público inteiro (hoje é só nome+contato direto no formulário), escopo grande.
-9. Limpeza futura: remover definitivamente as colunas legadas `providers.service`, `providers.duration` e `providers.price` depois que não houver necessidade de compatibilidade com bases antigas.
-10. Mover uploads de logo/imagens (base64 direto no banco: `providers.logo_url`, `platform_settings.brand_logo_url`/`brand_logotype_url`, `portfolio_photos`) pra Supabase Storage — aceitável em volume baixo de homologação, cresce mal em produção real.
-11. URLs públicas por prestador tipo `/clinica-vida-plena` (hoje é hash `#loja=`) — exigiria rewrite de servidor dinâmico por prestador, mais complexo que o rewrite estático de SPA que já existe (`vercel.json`).
-12. **`provider_resources` ficou de fora da migração de hierarquia** (`20260829180000_relationship_hierarchy.sql` reescreve `authenticated_scoped_access` → `authenticated_hierarchy_access` em quase toda tabela de negócio, mas não em `provider_resources`, criada depois em `20260829160000`). Hoje um representante consegue gerenciar tudo do prestador que ele responde, exceto os recursos/profissionais daquela loja (a policy ainda usa só `owns_provider`, não `can_manage_provider`). Achado ao revisar as migrações pendentes antes de aplicar em produção (2026-08-29) — não corrigido agora por ser fora do escopo da mudança que motivou a revisão (senha de acesso); só trocar `owns_provider(provider_id)` por `can_manage_provider(provider_id)` na policy de `provider_resources` quando for mexer nessa área.
+**Pendências, roadmap e histórico do que já foi corrigido moraram aqui até 2026-09-12 — agora estão em [`PENDENCIAS.md`](./PENDENCIAS.md)**, um registro controlado por ID (`PEND-XXX`) com status (aberto/em andamento/concluído/bloqueado), separado deste guia justamente pra permitir mais de uma sessão/agente trabalhando no projeto sem perder o controle do que já foi feito. Ler `PENDENCIAS.md` antes de assumir que algo "ainda não foi feito" ou de recriar um achado já registrado.
 
 ---
 
