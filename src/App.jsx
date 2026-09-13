@@ -218,7 +218,7 @@ function mapProviderRow(row) {
     seoDescription: row.seo_description || '',
     metaPixelId: row.meta_pixel_id || '',
     googleTagId: row.google_tag_id || '',
-    thankYouTitle: row.thank_you_title || 'Solicitacao recebida',
+    thankYouTitle: row.thank_you_title || 'Solicitação recebida',
     thankYouMessage: row.thank_you_message || 'Recebemos seu pedido de agendamento. O prestador vai confirmar os detalhes pelo contato informado.',
     landingStatus: row.landing_status || 'publicado',
     inviteTitle: row.invite_title,
@@ -1140,7 +1140,7 @@ function App() {
       .then(({ data: rows, error }) => {
         if (cancelled) return
         if (error) {
-          notify('Nao foi possivel carregar o portfolio desse prestador.')
+          notify('Não foi possível carregar o portfólio desse prestador.')
           return
         }
         updateData((current) => ({
@@ -1859,7 +1859,7 @@ function App() {
       highlights: [],
       slug: providerPublicSlug({ id, name: providerForm.name }),
       inviteTitle: `Agende com ${providerForm.name}`,
-      inviteMessage: 'Escolha um horario disponivel e envie sua solicitacao de atendimento.',
+      inviteMessage: 'Escolha um horário disponível e envie sua solicitação de atendimento.',
       firstOffer: providerForm.service,
       landingSubtitle: '',
       ctaLabel: 'Agendar agora',
@@ -1879,7 +1879,7 @@ function App() {
       seoDescription: '',
       metaPixelId: '',
       googleTagId: '',
-      thankYouTitle: 'Solicitacao recebida',
+      thankYouTitle: 'Solicitação recebida',
       thankYouMessage: 'Recebemos seu pedido de agendamento. O prestador vai confirmar os detalhes pelo contato informado.',
       landingStatus: 'rascunho',
       logoUrl: '',
@@ -2088,7 +2088,7 @@ function App() {
     const service = {
       id,
       providerId: provider.id,
-      name: 'Novo servico',
+      name: 'Novo serviço',
       description: '',
       price: 0,
       priceMode: 'fixo',
@@ -2111,7 +2111,7 @@ function App() {
       position: service.position,
       created_at: service.createdAt,
     })
-    if (error) notify('Nao foi possivel salvar o novo servico no banco de dados.')
+    if (error) notify('Não foi possível salvar o novo serviço no banco de dados.')
   }
 
   const updateProviderService = async (serviceId, field, value) => {
@@ -2132,7 +2132,7 @@ function App() {
       position: 'position',
     }
     const { error } = await supabase.from('provider_services').update({ [columnMap[field]]: value }).eq('id', serviceId)
-    if (error) notify('Nao foi possivel salvar esse servico no banco de dados.')
+    if (error) notify('Não foi possível salvar esse serviço no banco de dados.')
   }
 
   const moveProviderService = async (serviceId, direction) => {
@@ -2217,7 +2217,7 @@ function App() {
       ),
     }))
     const { error } = await supabase.from('provider_services').delete().eq('id', serviceId)
-    if (error) notify('Nao foi possivel remover esse servico no banco de dados.')
+    if (error) notify('Não foi possível remover esse serviço no banco de dados.')
   }
 
   const imageFileToBase64 = (file) =>
@@ -2291,7 +2291,7 @@ function App() {
       kind,
       created_at: photo.createdAt,
     })
-    if (error) notify('Nao foi possivel salvar essa foto no banco de dados.')
+    if (error) notify('Não foi possível salvar essa foto no banco de dados.')
   }
 
   const movePortfolioPhoto = async (photoId, direction) => {
@@ -2326,7 +2326,7 @@ function App() {
       portfolioPhotos: current.portfolioPhotos.map((photo) => (photo.id === photoId ? { ...photo, caption } : photo)),
     }))
     const { error } = await supabase.from('portfolio_photos').update({ caption }).eq('id', photoId)
-    if (error) notify('Nao foi possivel salvar a legenda da foto.')
+    if (error) notify('Não foi possível salvar a legenda da foto.')
   }
 
   const removePortfolioPhoto = async (photoId) => {
@@ -2335,7 +2335,7 @@ function App() {
       portfolioPhotos: current.portfolioPhotos.filter((photo) => photo.id !== photoId),
     }))
     const { error } = await supabase.from('portfolio_photos').delete().eq('id', photoId)
-    if (error) notify('Nao foi possivel remover essa foto.')
+    if (error) notify('Não foi possível remover essa foto.')
   }
 
   const createPrivacyRequest = async (event) => {
@@ -2398,11 +2398,11 @@ function App() {
       created_at: review.createdAt,
     })
     if (error) {
-      setReviewMessage('Nao foi possivel salvar a avaliacao agora.')
+      setReviewMessage('Não foi possível salvar a avaliação agora.')
       return
     }
     setReviewForm({ rating: 5, comment: '' })
-    setReviewMessage('Obrigado. Sua avaliacao foi registrada para revisao.')
+    setReviewMessage('Obrigado! Sua avaliação foi registrada para revisão.')
   }
 
   const toggleProvider = async (id) => {
@@ -2635,7 +2635,7 @@ function App() {
     }
     const { data: result, error } = response
     if (error || result?.error) {
-      const detail = result?.error || await functionErrorMessage(error, 'Nao foi possivel definir a senha de acesso.')
+      const detail = result?.error || await functionErrorMessage(error, 'Não foi possível definir a senha de acesso.')
       setProvisioningDebug(provisionDebugSnapshot('erro', targetEmail, detail))
       setProvisioningNotice(detail)
       return null
@@ -2657,7 +2657,7 @@ function App() {
       const result = await provisionAccountAccess(representative.email, { userId: representative.user_id })
       if (result) await refreshRepresentativeSecurity()
     } catch (error) {
-      setProvisioningNotice(error instanceof Error ? error.message : 'Nao foi possivel definir a senha de acesso.')
+      setProvisioningNotice(error instanceof Error ? error.message : 'Não foi possível definir a senha de acesso.')
     } finally {
       setProvisioningTarget('')
     }
@@ -2670,7 +2670,7 @@ function App() {
       const result = await provisionAccountAccess(invite.invited_email, { inviteToken: invite.token })
       if (!result) return
       if (!result.inviteFinalized) {
-        setProvisioningNotice(result.inviteError || 'Senha criada, mas nao foi possivel concluir o vinculo do convite.')
+        setProvisioningNotice(result.inviteError || 'Senha criada, mas não foi possível concluir o vínculo do convite.')
       }
       const [representativesResult, invitesResult] = await Promise.all([
         supabase.from('platform_representatives').select('*').order('created_at', { ascending: false }),
@@ -2679,7 +2679,7 @@ function App() {
       setRepresentatives(representativesResult.data || [])
       setRepresentativeInvites(invitesResult.data || [])
     } catch (error) {
-      setProvisioningNotice(error instanceof Error ? error.message : 'Nao foi possivel criar o acesso direto.')
+      setProvisioningNotice(error instanceof Error ? error.message : 'Não foi possível criar o acesso direto.')
     } finally {
       setProvisioningTarget('')
     }
@@ -2938,7 +2938,7 @@ function App() {
 
   const shareProviderLinkOn = (targetProvider, channel, linkType = 'invite') => {
     const url = linkType === 'store' ? getStoreLink(targetProvider) : getInviteLink(targetProvider)
-    const text = `Ola! Voce pode agendar seu atendimento comigo por este link: ${url}`
+    const text = `Olá! Você pode agendar seu atendimento comigo por este link: ${url}`
     const encodedUrl = encodeURIComponent(url)
     const encodedText = encodeURIComponent(text)
     const shareUrls = {
@@ -3238,7 +3238,7 @@ function App() {
             </form>
 
             {(data.settings.allowProviderSelfSignup || providerInviteToken) && <details className="signupDetails" open={Boolean(providerInviteToken)}>
-              <summary>{providerInviteToken ? 'Convite do admin recebido' : 'Ainda nao possui cadastro?'} <strong>Solicitar acesso</strong></summary>
+              <summary>{providerInviteToken ? 'Convite do admin recebido' : 'Ainda não possui cadastro?'} <strong>Solicitar acesso</strong></summary>
               <form className="signupInline" onSubmit={createProvider}>
               <div>
                 <p className="eyebrow">Novo prestador</p>
@@ -3341,13 +3341,13 @@ function App() {
         {thankYouBooking && (
           <section className="panel thankYouPanel">
             <CheckCircle2 size={34} />
-            <p className="eyebrow">Solicitacao enviada</p>
+            <p className="eyebrow">Solicitação enviada</p>
             <h2>{heroProvider?.thankYouTitle || 'Recebemos seu pedido'}</h2>
             <p>{heroProvider?.thankYouMessage || 'O prestador vai confirmar os detalhes pelo contato informado.'}</p>
             <div className="thankYouSummary">
               <span>Cliente <strong>{thankYouBooking.client}</strong></span>
-              <span>Servico <strong>{thankYouBooking.service?.name}</strong></span>
-              <span>Horario <strong>{formatDate(thankYouBooking.date)} as {thankYouBooking.time}</strong></span>
+              <span>Serviço <strong>{thankYouBooking.service?.name}</strong></span>
+              <span>Horário <strong>{formatDate(thankYouBooking.date)} às {thankYouBooking.time}</strong></span>
             </div>
             <form className="reviewForm" onSubmit={submitReview}>
               <strong>Avalie sua experiencia</strong>
@@ -3360,10 +3360,10 @@ function App() {
                   <option value="1">1 - Muito ruim</option>
                 </select>
               </label>
-              <label>Comentario
+              <label>Comentário
                 <textarea value={reviewForm.comment} onChange={(event) => setReviewForm({ ...reviewForm, comment: event.target.value })} />
               </label>
-              <button type="submit">Enviar avaliacao</button>
+              <button type="submit">Enviar avaliação</button>
               {reviewMessage && <small>{reviewMessage}</small>}
             </form>
             <button type="button" className="secondaryButton" onClick={() => setThankYouBooking(null)}>
@@ -3562,7 +3562,7 @@ function App() {
           <section className="panel termsPanel">
             <p className="eyebrow">Politica e termos</p>
             <details>
-              <summary>Ver condicoes de atendimento</summary>
+              <summary>Ver condições de atendimento</summary>
               {heroProvider.termsText.split('\n').filter((paragraph) => paragraph.trim()).map((paragraph, index) => (
                 <p key={index}>{paragraph}</p>
               ))}
@@ -3620,7 +3620,7 @@ function App() {
                 <div className="searchFilters">
                   <div className="search">
                   <Search size={17} />
-                  <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Buscar servico ou cidade" />
+                  <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Buscar serviço ou cidade" />
                   </div>
                   <select value={categoryFilter} onChange={(event) => setCategoryFilter(event.target.value)} aria-label="Filtrar por categoria">
                     <option value="todas">Todas as categorias</option>
@@ -5067,7 +5067,7 @@ function App() {
                         <strong>Atendimento</strong>
                         <div className="locationGrid">
                           {inviteDraft.neighborhood && <span><strong>Bairro</strong>{inviteDraft.neighborhood}</span>}
-                          {inviteDraft.address && <span><strong>Endereco</strong>{inviteDraft.address}</span>}
+                          {inviteDraft.address && <span><strong>Endereço</strong>{inviteDraft.address}</span>}
                           {inviteDraft.serviceMode && <span><strong>Formato</strong>{SERVICE_MODE_OPTIONS.find(([value]) => value === inviteDraft.serviceMode)?.[1] || inviteDraft.serviceMode}</span>}
                         </div>
                       </div>
@@ -5174,7 +5174,7 @@ function App() {
 
                     {(inviteDraft.thankYouTitle || inviteDraft.thankYouMessage) && (
                       <div className="landingPreviewBlock previewConversao">
-                        <strong>{inviteDraft.thankYouTitle || 'Solicitacao recebida'}</strong>
+                        <strong>{inviteDraft.thankYouTitle || 'Solicitação recebida'}</strong>
                         <p>{inviteDraft.thankYouMessage || 'Mensagem exibida apos o envio do agendamento.'}</p>
                       </div>
                     )}
@@ -5334,11 +5334,11 @@ function App() {
                 <div className="providerSection">
                   <div className="sectionTools">
                     <div>
-                      <h3>Catalogo de servicos</h3>
-                      <span className="sectionSub">Servicos ativos aparecem na busca e na loja publica.</span>
+                      <h3>Catálogo de serviços</h3>
+                      <span className="sectionSub">Serviços ativos aparecem na busca e na loja pública.</span>
                     </div>
                     <button className="secondaryButton compactButton" type="button" onClick={createProviderService}>
-                      <Plus size={16} /> Adicionar servico
+                      <Plus size={16} /> Adicionar serviço
                     </button>
                   </div>
 
@@ -5382,7 +5382,7 @@ function App() {
                                 <button className="dangerButton" type="button" onClick={() => removePortfolioPhoto(photo.id)}><Trash2 size={14} /></button>
                               </div>
                             ))}
-                            <label className="photoUpload"><Image size={18} /> Foto do servico
+                            <label className="photoUpload"><Image size={18} /> Foto do serviço
                               <input accept="image/*" type="file" onChange={(event) => uploadPortfolioPhoto(service.id, event.target.files?.[0])} />
                             </label>
                           </div>

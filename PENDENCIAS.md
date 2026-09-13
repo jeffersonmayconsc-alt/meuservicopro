@@ -50,7 +50,7 @@ Registro controlado de pendências do projeto, separado do `guia_claudinha.md` (
 | PEND-019 | Arquitetura | Média | bloqueado | Bundle único sem code-splitting |
 | PEND-028 | UI/UX | Baixa | mesclado em PEND-030 | Texto sem acentuação em `shareProviderLinkOn` |
 | PEND-029 | UI/UX | Média | parcial | Navegação do prestador burocrática/técnica demais |
-| PEND-030 | UI/UX | Baixa | aberto | Texto sem acentuação espalhado em várias strings novas (16 ocorrências) |
+| PEND-030 | UI/UX | Baixa | concluído | Texto sem acentuação espalhado em várias strings (32 corrigidas) |
 | PEND-031 | Produto | — | concluído | Painel de contabilidade (admin master) — ledger manual receita/despesa/CAC |
 | PEND-032 | UI/UX | Média | parcial | Polimento de acessibilidade e feedback de UI (nível "produto maduro") |
 | PEND-033 | Arquitetura | — | bloqueado | Levar o projeto ao "nível Outlook" |
@@ -174,7 +174,11 @@ Achado ao validar o princípio "amigável, sem jargão técnico" (2026-09-12), r
 - `App.jsx:5016` — `Catalogo de servicos`
 - `App.jsx:5020` — `Adicionar servico`
 - `App.jsx:5064` — `Foto do servico`
-Não é mojibake (`fix-encoding.mjs` não pega, texto é ASCII válido só sem os acentos certos) — é o mesmo padrão de digitação sem acentuação repetido em muitos lugares. Não é "técnico", mas pesa contra o critério de "amigável": mensagem de erro/alerta com português quebrado passa impressão de app mal cuidado pro público leigo que é o foco do produto. Correção: adicionar acentuação correta (Não/possível/serviço/vínculo/catálogo/Olá/Você) nas 16 linhas acima, tudo de uma vez — mesma causa, mesmo tipo de correção pontual, sem risco. **Ainda não corrigido** (reconfirmado em 2026-09-12, ver conversa).
+Não é mojibake (`fix-encoding.mjs` não pega, texto é ASCII válido só sem os acentos certos) — é o mesmo padrão de digitação sem acentuação repetido em muitos lugares. Não é "técnico", mas pesa contra o critério de "amigável": mensagem de erro/alerta com português quebrado passa impressão de app mal cuidado pro público leigo que é o foco do produto. Correção: adicionar acentuação correta (Não/possível/serviço/vínculo/catálogo/Olá/Você) nas 16 linhas acima, tudo de uma vez — mesma causa, mesmo tipo de correção pontual, sem risco. **Concluído em 2026-09-13**: 32 ocorrências corrigidas (as 16 mapeadas + 16 que uma varredura mais ampla encontrou depois, incluindo a tela de confirmação de agendamento do cliente — "Solicitacao enviada", "Servico", "Horario ... as"). Prioridade foi dada ao que o **cliente final** vê (loja pública, confirmação, avaliação, busca), depois ao painel do prestador.
+
+**Falso positivo deixado de propósito**: as 9 ocorrências restantes de `visualizou_servico` são chave técnica de evento gravada em `analytics_events.event_type` — renomear quebraria o histórico de analytics. Não é texto visível.
+
+**Lição pra próxima**: o `fix-encoding.mjs` não pega esse tipo de erro (é ASCII válido, não mojibake), e grep por lista fixa de frases também deixa passar. O que funcionou foi varredura por *palavra* (`\b(nao|voce|servico|solicitacao|horario|possivel|...)\b`) em `src/App.jsx` + `src/modules/**` + `src/components/**` — usar essa forma se o problema voltar.
 
 ### PEND-031 — Produto — concluído
 **Painel de contabilidade (admin master)**
