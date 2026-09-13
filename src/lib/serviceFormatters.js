@@ -9,6 +9,8 @@ export function formatServicePrice(service, showPrices = true) {
   return currency(service.price)
 }
 
+// A etiqueta aparece em caixa alta ao lado de "50 MIN": "DURAÇÃO VARIÁVEL"
+// ficava com o dobro da largura e desequilibrava a linha de cards.
 export function formatServiceDuration(service) {
-  return service?.duration ? service.duration + ' min' : 'Duração variável'
+  return service?.duration ? service.duration + ' min' : 'A combinar'
 }

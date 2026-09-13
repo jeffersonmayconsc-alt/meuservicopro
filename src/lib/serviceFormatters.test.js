@@ -13,7 +13,7 @@ describe('service formatters', () => {
   })
 
   it('formats variable duration', () => {
-    expect(formatServiceDuration({ duration: null })).toBe('Duração variável')
+    expect(formatServiceDuration({ duration: null })).toBe('A combinar')
     expect(formatServiceDuration({ duration: 50 })).toBe('50 min')
   })
 })

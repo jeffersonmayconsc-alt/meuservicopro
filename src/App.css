@@ -2218,10 +2218,14 @@ label {
 .storefrontStyle-premium .thankYouPanel,
 .storefrontStyle-premium .form,
 .storefrontStyle-premium .privacyPanel {
+  /* A cor do prestador fica na borda, nao no fundo. Antes o fundo era tingido
+     com a cor de destaque, o que (a) sujava a tela quando a cor era saturada
+     — amarelo-limao, verde-neon — e (b) so pegava alguns paineis: "Sobre" e
+     "Vitrine" saiam creme enquanto o de servicos ficava branco, e essa
+     inconsistencia era o que mais chamava atencao. Superficie grande neutra,
+     cor nos detalhes. */
   border-color: color-mix(in srgb, var(--provider-accent, var(--accent)), var(--border) 55%);
-  background:
-    linear-gradient(180deg, color-mix(in srgb, var(--provider-accent, var(--accent)), transparent 94%), transparent),
-    var(--surface);
+  background: var(--surface);
 }
 
 .storefrontStyle-premium .proofGrid span {
